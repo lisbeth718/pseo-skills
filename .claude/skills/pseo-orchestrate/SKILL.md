@@ -19,6 +19,9 @@ pseo-discovery (0)    ← what should we build? what data exists?
 pseo-audit (1)        ← is the codebase ready for what we want to build?
     │
     ▼
+pseo-scale (1.5)      ← CONDITIONAL: only if 10K+ pages planned
+    │
+    ▼
 pseo-data (2)
     │
     ├──────────────┐
@@ -44,6 +47,8 @@ pseo-quality-guard (9)
 ```
 
 **Note:** metadata and schema are independent of each other — both read from the data layer and render into templates. Run them in parallel in Phase 4.
+
+**Note:** pseo-scale only applies when discovery identifies 10K+ pages. It runs after audit to set up database infrastructure, data sufficiency gating, and CDN architecture before the data layer is built. At < 10K pages, skip it entirely.
 
 ## Execution Modes
 
@@ -76,38 +81,45 @@ Run only pseo-quality-guard against the existing implementation.
 7. Ask the user to confirm which areas to implement
 8. Create a prioritized implementation plan based on audit results
 
+### Phase 1.5: Scale Infrastructure (conditional — 10K+ pages only)
+9. Run **pseo-scale** to set up database, sufficiency gating, CDN, and monitoring
+10. Migrate existing data to database if moving from file-based storage
+11. Compute data sufficiency scores and gate thin combinations
+
 ### Phase 2: Data Foundation
-9. Run **pseo-data** to set up or refactor the data architecture
-10. Verify data layer exports are complete and typed
-11. Validate slug uniqueness and data integrity
+12. Run **pseo-data** to set up or refactor the data architecture
+13. Verify data layer exports are complete and typed
+14. Validate slug uniqueness and data integrity
 
 ### Phase 3: Page Structure (parallel where possible)
-12. Run **pseo-templates** to create or refactor page templates and routing
-13. Run **pseo-linking** to build internal linking, breadcrumbs, and hub pages
-14. Verify all routes generate correctly and no 404s exist
+15. Run **pseo-templates** to create or refactor page templates and routing
+16. Run **pseo-linking** to build internal linking, breadcrumbs, and hub pages
+17. Verify all routes generate correctly and no 404s exist
 
 ### Phase 4: SEO Tags
-15. Run **pseo-metadata** to implement dynamic metadata on all templates
-16. Run **pseo-schema** to add JSON-LD structured data to all templates
-17. Verify metadata and schema render correctly on sample pages
+18. Run **pseo-metadata** to implement dynamic metadata on all templates
+19. Run **pseo-schema** to add JSON-LD structured data to all templates
+20. Verify metadata and schema render correctly on sample pages
 
 ### Phase 5: Optimization
-18. Run **pseo-performance** to optimize build times, CWV, and caching
-19. Run **pseo-llm-visibility** to optimize for AI citation (llms.txt, AI crawlers, content chunking, entity optimization)
-20. Run a build to verify it completes successfully at current scale
-21. Check bundle size and rendering performance
+21. Run **pseo-performance** to optimize build times, CWV, and caching
+22. Run **pseo-llm-visibility** to optimize for AI citation (llms.txt, AI crawlers, content chunking, entity optimization)
+23. Run a build to verify it completes successfully at current scale
+24. Check bundle size and rendering performance
 
 ### Phase 6: Validation
-22. Run **pseo-quality-guard** with scope `all`
-23. Present quality report to the user
-24. Fix any critical issues flagged by the quality guard
-25. Re-run quality guard to confirm all issues resolved
+25. Run **pseo-quality-guard** with scope `all` (or `delta` at 10K+ pages)
+26. Present quality report to the user
+27. Fix any critical issues flagged by the quality guard
+28. Re-run quality guard to confirm all issues resolved
 
 ## Decision Points
 
 At each phase transition, check with the user:
 - Phase 0→1: "Here are the pSEO opportunities. Which page types should we build?"
-- Phase 1→2: "The audit found these issues. Proceed with implementation?"
+- Phase 1→1.5: "The audit found these issues. Scale target is N pages — do we need scale infrastructure?" (only if 10K+)
+- Phase 1.5→2: "Database and gating are set up. Proceed with data architecture?"
+- Phase 1→2: "The audit found these issues. Proceed with implementation?" (if < 10K, skip 1.5)
 - Phase 3→4: "Templates and linking are set up. Ready for metadata and schema?"
 - Phase 5→6: "Performance and LLM visibility optimizations applied. Ready for final validation?"
 
@@ -116,13 +128,14 @@ At each phase transition, check with the user:
 Track and report progress as:
 
 ```
-Phase 0: Discovery       [✓] Complete — 3 page types confirmed
-Phase 1: Audit           [✓] Complete
-Phase 2: Data            [✓] Complete
-Phase 3: Structure       [→] In Progress (templates done, linking in progress)
-Phase 4: SEO Tags        [ ] Pending
-Phase 5: Optimization    [ ] Pending (performance + LLM visibility)
-Phase 6: Validation      [ ] Pending
+Phase 0: Discovery        [✓] Complete — 3 page types confirmed, 50K pages planned
+Phase 1: Audit            [✓] Complete
+Phase 1.5: Scale Infra    [✓] Complete (DB, gating, CDN) — skipped if < 10K
+Phase 2: Data             [✓] Complete
+Phase 3: Structure        [→] In Progress (templates done, linking in progress)
+Phase 4: SEO Tags         [ ] Pending
+Phase 5: Optimization     [ ] Pending (performance + LLM visibility)
+Phase 6: Validation       [ ] Pending
 ```
 
 ## Important Rules

@@ -201,7 +201,8 @@ Google's 2025 spam detection system (SpamBrain) monitors how fast pages are publ
 | < 100 | Deploy all at once — low risk |
 | 100-500 | Deploy over 1-2 weeks in batches of 50-100 |
 | 500-2000 | Deploy over 2-4 weeks, monitor Search Console for issues between batches |
-| 2000+ | Deploy over 4-8 weeks, validate indexing and ranking quality per batch |
+| 2000-10K | Deploy over 4-8 weeks, validate indexing and ranking quality per batch |
+| 10K-100K | ISR-only (don't pre-build). Submit sitemap in category waves over 8-16 weeks. Use data sufficiency gating to exclude thin pages. See **pseo-scale** for full strategy. |
 
 **Implementation approaches:**
 
@@ -247,4 +248,5 @@ Google's 2025 spam detection system (SpamBrain) monitors how fast pages are publ
 
 - **Optimizes**: pseo-templates (rendering strategy), pseo-data (fetch performance)
 - **Independent of**: pseo-metadata, pseo-schema, pseo-linking (these are typically lightweight)
+- **Extended by**: pseo-scale (CDN/edge architecture, build strategy at 100K, cache warm-up, crawl budget)
 - **Validated by**: Lighthouse, WebPageTest, or framework-specific performance tools

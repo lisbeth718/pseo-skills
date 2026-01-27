@@ -96,6 +96,15 @@ Based on the data source (`$ARGUMENTS` or detected):
 
 **API**: Create a typed API client, implement rate limiting and retry logic, add response caching.
 
+## Scale Limits
+
+The in-memory and file-based patterns in this skill work up to ~10K pages. Beyond that:
+
+- **10K-50K pages**: Requires a database (PostgreSQL, MySQL). In-memory index tier becomes borderline at 50K (~50MB). File-based data sources are too slow.
+- **50K-100K+ pages**: Requires database + cache layer (Redis) + cursor-based pagination. `getAllSlugs()` must use cursor iteration, not array return. Data sufficiency gating prevents generating thin pages.
+
+See **pseo-scale** for the complete database-backed data layer, sufficiency scoring, and scale-specific patterns.
+
 ## Memory-Conscious Data Patterns
 
 At 1000+ pages, how data is loaded matters more than what is loaded. A full content model with body text, FAQs, and images can be 50-500KB per page. Loading all pages into memory simultaneously will OOM.

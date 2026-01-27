@@ -1,7 +1,7 @@
 ---
 name: pseo-quality-guard
 description: Validate programmatic SEO pages against quality standards to prevent thin content, duplicate content, and keyword cannibalization. Use when auditing pSEO output quality, before deploying new pages, when Google Search Console reports issues, or when checking if generated pages meet quality thresholds. This skill can also be used automatically to validate changes made by other pseo-* skills.
-argument-hint: "[check: all | thin | duplicates | cannibalization | metadata | abuse | prune]"
+argument-hint: "[check: all | thin | duplicates | cannibalization | metadata | abuse | prune | delta]"
 allowed-tools: Read, Glob, Grep, Bash
 ---
 
@@ -263,9 +263,11 @@ If `$ARGUMENTS` specifies a check:
 - `metadata`: Metadata validation only
 - `abuse`: Scaled content abuse pattern detection only
 - `prune`: Run all checks and output pruning recommendations
+- `delta`: Run all checks on pages modified since last validation only (requires content hashing — see pseo-scale section 4)
 
 ## Relationship to Other Skills
 
 - **Validates output of**: pseo-templates, pseo-metadata, pseo-schema, pseo-linking
 - **Depends on**: pseo-data (needs access to all page data for cross-page comparisons)
 - **Run after**: Any other pseo-* skill to verify quality
+- **Extended by**: pseo-scale (incremental/delta validation, parallel category-partitioned checks, content hash storage)

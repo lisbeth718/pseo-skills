@@ -16,6 +16,7 @@ A complete set of skills for implementing programmatic SEO (pSEO) at scale. Work
 | **pseo-performance** | Optimize builds, Core Web Vitals, memory, and publication velocity |
 | **pseo-llm-visibility** | Optimize for AI citation: llms.txt, AI crawlers, content chunking, entity optimization |
 | **pseo-quality-guard** | Validate against thin content, duplicates, cannibalization, and scaled content abuse |
+| **pseo-scale** | Architect for 10K-100K+ pages: database layer, data sufficiency gating, incremental validation, crawl budget, CDN |
 | **pseo-orchestrate** | Coordinate all skills in the correct dependency order |
 
 ## Pipeline
@@ -25,6 +26,9 @@ pseo-discovery (0)
     |
     v
 pseo-audit (1)
+    |
+    v
+pseo-scale (1.5)       <-- conditional: only if 10K+ pages
     |
     v
 pseo-data (2)
@@ -72,6 +76,7 @@ Copy to `.claude/skills/`:
     pseo-performance/
     pseo-llm-visibility/
     pseo-quality-guard/
+    pseo-scale/
     pseo-orchestrate/
 ```
 
@@ -92,6 +97,7 @@ Copy to `.cursor/rules/` as `.mdc` files:
     pseo-performance.mdc
     pseo-llm-visibility.mdc
     pseo-quality-guard.mdc
+    pseo-scale.mdc
     pseo-orchestrate.mdc
 ```
 
@@ -134,11 +140,15 @@ The orchestrate skill handles dependency ordering automatically. For manual exec
 
 ## Key Features
 
-- **Two-tier data architecture** for memory safety at scale (PageIndex vs BaseSEOContent)
+- **Scales to 100K+ pages**: Database-backed data layer, data sufficiency gating, incremental validation, CDN/edge delivery, crawl budget management
+- **Two-tier data architecture** for memory safety (PageIndex vs BaseSEOContent), cursor-based iteration at scale
+- **Data sufficiency gating**: Prevents thin page generation before build time — only pages with enough data get created
 - **Google 2025 compliance**: E-E-A-T signals, Needs Met enforcement, scaled content abuse detection, YMYL risk assessment
 - **LLM visibility**: llms.txt, AI crawler configuration, answer capsule pattern (134-167 words), entity optimization
 - **Scalable similarity detection**: MinHash/LSH and SimHash instead of O(n^2) pairwise comparison
-- **Publication velocity controls**: Gradual rollout strategies to avoid spam signals
+- **Incremental validation**: Delta-only quality checks for fast iteration at scale, with periodic full scans
+- **Publication velocity controls**: Gradual rollout strategies from 100 to 100K pages
+- **Content enrichment pipeline**: Structured data enrichment with optional LLM-assisted generation and human review sampling
 - **Framework-agnostic**: Next.js App Router by default, adaptable to Astro, Nuxt, Remix, SvelteKit
 
 ## Author
