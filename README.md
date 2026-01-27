@@ -57,76 +57,17 @@ pseo-quality-guard (9)
 
 ## Installation
 
-Each skill is a self-contained markdown file with optional `references/` subfolder. Install based on your AI assistant:
+Each skill is a self-contained markdown file in the `skills/` directory. Copy to your AI assistant's custom instructions location:
 
-### Claude Code
+| Assistant | Copy to |
+|-----------|---------|
+| Claude Code | `.claude/skills/` |
+| Cursor | `.cursor/rules/` (rename to `.mdc`) or `.cursorrules` |
+| GitHub Copilot | `.github/copilot-instructions.md` (concatenate) |
+| Windsurf | `.windsurf/rules/` or `.windsurfrules` |
+| Other | Feed as system prompts or custom instructions |
 
-Copy to `.claude/skills/`:
-
-```
-.claude/
-  skills/
-    pseo-discovery/
-    pseo-audit/
-    pseo-data/
-    pseo-templates/
-    pseo-metadata/
-    pseo-schema/
-    pseo-linking/
-    pseo-performance/
-    pseo-llm-visibility/
-    pseo-quality-guard/
-    pseo-scale/
-    pseo-orchestrate/
-```
-
-### Cursor
-
-Copy to `.cursor/rules/` as `.mdc` files:
-
-```
-.cursor/
-  rules/
-    pseo-discovery.mdc
-    pseo-audit.mdc
-    pseo-data.mdc
-    pseo-templates.mdc
-    pseo-metadata.mdc
-    pseo-schema.mdc
-    pseo-linking.mdc
-    pseo-performance.mdc
-    pseo-llm-visibility.mdc
-    pseo-quality-guard.mdc
-    pseo-scale.mdc
-    pseo-orchestrate.mdc
-```
-
-Or add to a single `.cursorrules` file in your project root.
-
-### GitHub Copilot
-
-Concatenate relevant skills into `.github/copilot-instructions.md`:
-
-```
-.github/
-  copilot-instructions.md
-```
-
-### Windsurf
-
-Copy to `.windsurfrules` or `.windsurf/rules/`:
-
-```
-.windsurf/
-  rules/
-    pseo-discovery.md
-    pseo-audit.md
-    ...
-```
-
-### Other assistants
-
-The skills are plain markdown. Feed them as system prompts, context, or custom instructions in whatever format your assistant supports.
+The skills are plain markdown and work with any assistant that accepts custom instructions.
 
 ## Usage
 
