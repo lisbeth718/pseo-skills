@@ -1,6 +1,6 @@
 # pSEO Skills for AI Coding Assistants
 
-A complete set of skills for implementing programmatic SEO (pSEO) at scale. Works with Claude Code, Cursor, GitHub Copilot, Windsurf, and any LLM-powered coding assistant. Designed for 1000+ page sites with built-in quality safeguards, memory management, and compliance with Google's 2025 algorithm updates and LLM visibility optimization.
+A complete set of skills for implementing programmatic SEO (pSEO) at scale. Works with Claude Code, Cursor, GitHub Copilot, Windsurf, Cline, OpenAI Codex CLI, Aider, Continue, Amazon Q, Zed AI, Cody, Junie, Devin, and any LLM-powered coding assistant. Designed for 1000+ page sites with built-in quality safeguards, memory management, and compliance with Google's 2025 algorithm updates and LLM visibility optimization.
 
 ## Skills
 
@@ -16,6 +16,7 @@ A complete set of skills for implementing programmatic SEO (pSEO) at scale. Work
 | **pseo-performance** | Optimize builds, Core Web Vitals, memory, and publication velocity |
 | **pseo-llm-visibility** | Optimize for AI citation: llms.txt, AI crawlers, content chunking, entity optimization |
 | **pseo-quality-guard** | Validate against thin content, duplicates, cannibalization, and scaled content abuse |
+| **gsc** | Pull and analyze Google Search Console data, inspect URLs, manage sitemaps |
 | **pseo-scale** | Architect for 10K-100K+ pages: database layer, data sufficiency gating, incremental validation, crawl budget, CDN |
 | **pseo-orchestrate** | Coordinate all skills in the correct dependency order |
 
@@ -65,6 +66,15 @@ Each skill is a self-contained markdown file in the `skills/` directory. Copy to
 | Cursor | `.cursor/rules/` (rename to `.mdc`) or `.cursorrules` |
 | GitHub Copilot | `.github/copilot-instructions.md` (concatenate) |
 | Windsurf | `.windsurf/rules/` or `.windsurfrules` |
+| Cline | `.clinerules` or `.cline/rules/` |
+| OpenAI Codex CLI | `AGENTS.md` (concatenate) |
+| Aider | Pass with `--read` flag (e.g. `--read skills/SKILL.md`) |
+| Continue | `.continue/rules/` |
+| Amazon Q Developer | `.amazonq/rules/` |
+| Zed AI | `.zed/rules/` or Zed assistant settings |
+| Sourcegraph Cody | `.cody/instructions.md` (concatenate) |
+| JetBrains Junie | `.junie/guidelines.md` |
+| Devin | `devin.md` or knowledge base |
 | Other | Feed as system prompts or custom instructions |
 
 The skills are plain markdown and work with any assistant that accepts custom instructions.

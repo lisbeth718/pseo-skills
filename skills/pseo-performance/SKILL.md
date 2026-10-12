@@ -248,5 +248,5 @@ Google's 2025 spam detection system (SpamBrain) monitors how fast pages are publ
 
 - **Optimizes**: pseo-templates (rendering strategy), pseo-data (fetch performance)
 - **Independent of**: pseo-metadata, pseo-schema, pseo-linking (these are typically lightweight)
-- **Extended by**: pseo-scale (CDN/edge architecture, build strategy at 100K, cache warm-up, crawl budget)
+- **Extended by**: pseo-scale (CDN/edge architecture, build strategy at 100K, cache warm-up, crawl budget, Vercel cost optimization)
 - **Validated by**: Lighthouse, WebPageTest, or framework-specific performance tools

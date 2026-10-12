@@ -170,6 +170,8 @@ const pool = new Pool({
 
 See `references/database-patterns.md` for full patterns by database type.
 
+See `references/vercel-optimization.md` for Vercel-specific build cost and ISR optimization strategies.
+
 ## 2. Data Sufficiency Gating
 
 At 100K pages, many combinations will produce thin content. Gate page generation BEFORE build time — don't create pages that will fail quality checks.
@@ -529,6 +531,8 @@ export const revalidate = 86400; // 24 hours
 | 100K (DON'T DO THIS) | 5-15 hours | 16GB+ |
 
 **Rule: Never pre-build more than 10K pages.** Use ISR for everything else.
+
+For Vercel-specific cost optimization (build minutes, function costs, preview deploys), see `references/vercel-optimization.md`.
 
 ### Warm-Up After Deploy
 
