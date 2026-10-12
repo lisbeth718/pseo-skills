@@ -12,6 +12,10 @@ if (!site || (!flags.urls && !flags.file)) {
   console.error('Usage: npx tsx inspect.ts --site <property> (--urls a,b | --file urls.txt) [--delay ms] [--out path]');
   process.exit(1);
 }
+if (flags.file !== undefined && typeof flags.file !== 'string') {
+  console.error('--file needs a path');
+  process.exit(1);
+}
 const urls: string[] = flags.file
   ? readFileSync(flags.file as string, 'utf-8').split('\n').map((s) => s.trim()).filter(Boolean)
   : String(flags.urls).split(',').map((s) => s.trim()).filter(Boolean);
@@ -47,7 +51,7 @@ async function main() {
       });
       console.log(`[${i + 1}/${urls.length}] ${r?.verdict} | ${r?.coverageState} | ${url}`);
     } catch (e: any) {
-      const status = e?.code || e?.response?.status;
+      const status = Number(e?.response?.status ?? e?.status ?? e?.code);
       console.error(`[${i + 1}/${urls.length}] error ${status} for ${url}: ${e.message}`);
       results.push({ url, error: e.message });
       if (status === 429) {
@@ -62,4 +66,7 @@ async function main() {
   console.log(`Wrote ${outPath}`);
 }
 
-main();
+main().catch((e) => {
+  console.error(e?.errors?.[0]?.message || e?.message || e);
+  process.exit(1);
+});

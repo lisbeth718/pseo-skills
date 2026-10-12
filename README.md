@@ -1,6 +1,6 @@
-# pSEO Skills for AI Coding Assistants
+# pSEO + SEO Skills for AI Coding Assistants
 
-A complete set of skills for implementing programmatic SEO (pSEO) at scale. Works with Claude Code, Cursor, GitHub Copilot, Windsurf, Cline, OpenAI Codex CLI, Aider, Continue, Amazon Q, Zed AI, Cody, Junie, Devin, and any LLM-powered coding assistant. Designed for 1000+ page sites with built-in quality safeguards, memory management, and alignment with Google's current spam policies (scaled content abuse, doorway abuse, site reputation) and optional visibility for non-Google AI agents.
+A complete set of skills for implementing programmatic SEO (pSEO) at scale, plus general SEO skills for multilingual sites, migrations, log analysis, regression checks and content pruning. Works with Claude Code, Cursor, GitHub Copilot, Windsurf, Cline, OpenAI Codex CLI, Aider, Continue, Amazon Q, Zed AI, Cody, Junie, Devin, and any LLM-powered coding assistant. Designed for 1000+ page sites with built-in quality safeguards, memory management, and alignment with Google's current spam policies (scaled content abuse, doorway abuse, site reputation) and optional visibility for non-Google AI agents.
 
 ## Skills
 
@@ -13,12 +13,30 @@ A complete set of skills for implementing programmatic SEO (pSEO) at scale. Work
 | **pseo-metadata** | Implement dynamic title, description, canonical, OG, and Twitter tags |
 | **pseo-schema** | Add JSON-LD structured data for features Google still supports (Article, Breadcrumb, Product, etc.) |
 | **pseo-linking** | Build internal linking: hub-spoke, breadcrumbs, related pages, sitemap, redirects |
-| **pseo-performance** | Optimize builds, Core Web Vitals, memory, and publication velocity |
+| **pseo-performance** | Optimize builds, Core Web Vitals, memory, and gradual rollout |
 | **pseo-llm-visibility** | Visibility for non-Google AI agents: llms.txt, AI crawler controls, entity clarity (Google Search ignores llms.txt) |
 | **pseo-quality-guard** | Validate against thin content, duplicates, cannibalization, and scaled content abuse |
 | **gsc** | Post-launch monitoring: pull Search Console data, inspect URLs, manage sitemaps (self-contained scripts) |
 | **pseo-scale** | Architect for 10K-100K+ pages: database layer, data sufficiency gating, incremental validation, crawl budget, CDN |
 | **pseo-orchestrate** | Coordinate all skills in the correct dependency order |
+
+### General SEO skills
+
+Usable on any site, pSEO or not. Most also slot into the pipeline below.
+
+| Skill | Purpose |
+|-------|---------|
+| **seo-i18n** | Multilingual and multi-regional SEO: URL structure, hreflang, localized metadata and slugs, `[lang]` routing |
+| **seo-migration** | SEO-safe migrations: redirect maps, domain moves, replatforms, Change of Address, monitoring and rollback |
+| **seo-log-analysis** | Server and CDN log analysis: crawl waste, orphaned pages, time to first crawl, Googlebot latency, AI bot traffic |
+| **seo-regression-guard** | Pre-deploy and post-deploy SEO regression checks against a baseline, no CI needed (ships `scripts/`) |
+| **seo-content-refresh** | Content decay and pruning: classify pages by trend, refresh, consolidate, noindex or remove |
+
+Where they fit:
+- **seo-i18n**: run alongside `pseo-metadata` and `pseo-linking` when the site is multilingual.
+- **seo-regression-guard**: run before and after each deploy.
+- **seo-log-analysis** and **seo-content-refresh**: run after launch, together with `gsc` (monthly or quarterly).
+- **seo-migration**: standalone, whenever URLs, domains or the stack change.
 
 ## Pipeline
 
@@ -56,10 +74,22 @@ pseo-performance    pseo-llm-visibility
 pseo-quality-guard (9)
     |
     v
+seo-regression-guard   <-- before deploy (baseline + check)
+    |
+    v
 (deploy, submit sitemap)
     |
     v
+seo-regression-guard   <-- after deploy (live check)
+    |
+    v
 gsc (10)               <-- post-launch monitoring, recurring
+    |
+    v
+seo-log-analysis, seo-content-refresh   <-- recurring, after launch
+
+seo-i18n: alongside pseo-metadata / pseo-linking (multilingual sites)
+seo-migration: standalone
 ```
 
 ## Installation
@@ -83,7 +113,7 @@ Each skill lives in its own folder in `skills/` (a `SKILL.md`, plus `references/
 | Devin | `devin.md` or knowledge base |
 | Other | Feed as system prompts or custom instructions |
 
-The skills are plain markdown and work with any assistant that accepts custom instructions. The `gsc` skill also ships TypeScript scripts: run `npm install` once in `skills/gsc/scripts/` (copy that folder too if your assistant needs a flat file).
+The skills are plain markdown and work with any assistant that accepts custom instructions. The `gsc` skill also ships TypeScript scripts: run `npm install` once in `skills/gsc/scripts/` (copy that folder too if your assistant needs a flat file). `seo-regression-guard` ships a `scripts/` folder as well; copy it with the skill.
 
 ## Usage
 
@@ -104,7 +134,7 @@ The orchestrate skill handles dependency ordering automatically. For manual exec
 - **LLM visibility**: llms.txt and AI crawler configuration for non-Google agents (Google Search ignores llms.txt and gives no special treatment to chunked or rewritten content), entity clarity
 - **Scalable similarity detection**: MinHash/LSH and SimHash instead of O(n^2) pairwise comparison
 - **Incremental validation**: Delta-only quality checks for fast iteration at scale, with periodic full scans
-- **Publication velocity controls**: Gradual rollout strategies from 100 to 100K pages
+- **Gradual rollout**: Rollout strategies from 100 to 100K pages
 - **Content enrichment pipeline**: Structured data enrichment with optional LLM-assisted generation and human review sampling
 - **Post-launch monitoring**: self-contained Search Console scripts (OAuth, search analytics, URL inspection, sitemaps), read-only scope by default
 - **Framework-agnostic**: Next.js App Router by default, adaptable to Astro, Nuxt, Remix, SvelteKit

@@ -1,5 +1,5 @@
 import { google } from 'googleapis';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
 
@@ -32,6 +32,7 @@ export function loadClient(): { client_id: string; client_secret: string } {
 export function saveTokens(tokens: Record<string, unknown>) {
   mkdirSync(dirname(TOKENS_PATH), { recursive: true });
   writeFileSync(TOKENS_PATH, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+  chmodSync(TOKENS_PATH, 0o600);
 }
 
 export function newOAuthClient() {

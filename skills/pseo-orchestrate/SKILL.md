@@ -53,6 +53,8 @@ gsc (10)              ← post-launch monitoring (after pages are live)
 
 **Note:** gsc is a post-launch step. It needs live pages and a submitted sitemap, so it runs after deployment and then on a recurring schedule, not inside the build.
 
+**Note:** the general SEO skills sit beside this pipeline: `seo-i18n` runs with Phases 3-4 when the site is multilingual (alongside pseo-linking and pseo-metadata), `seo-regression-guard` runs before and after each deploy, `seo-log-analysis` and `seo-content-refresh` run after launch with gsc, and `seo-migration` is standalone (URL, domain or stack changes).
+
 **Note:** pseo-scale only applies when discovery identifies 10K+ pages. It runs after audit to set up database infrastructure, data sufficiency gating, and CDN architecture before the data layer is built. At < 10K pages, skip it entirely.
 
 ## Execution Modes
@@ -117,10 +119,13 @@ Run only pseo-quality-guard against the existing implementation.
 26. Present quality report to the user
 27. Fix any critical issues flagged by the quality guard
 28. Re-run quality guard to confirm all issues resolved
+28a. Run **seo-regression-guard** to capture a baseline and check the build (canonicals, robots, sitemap, metadata) before deploying
 
 ### Phase 7: Post-launch monitoring (after deploy)
 29. Deploy (outside this skill), submit the sitemap index, and launch in waves rather than all at once
 30. Run **gsc** `pull` and `inspect` on a sample per template: indexed share, "Crawled - currently not indexed", canonical mismatches
+30a. Run **seo-regression-guard** against the live site after each deploy
+30b. Once data accumulates, run **seo-log-analysis** (crawl waste, time to first crawl) and **seo-content-refresh** (decay, pruning) on a monthly or quarterly schedule
 31. Repeat weekly during rollout. If a template shows poor indexing, return to pseo-data (raise the sufficiency threshold) and pseo-quality-guard before publishing more pages
 
 ## Decision Points

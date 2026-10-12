@@ -4,6 +4,7 @@
 //   default: read-only scope (webmasters.readonly)
 //   --write: full scope, only needed for sitemap submit/delete
 import { createServer } from 'http';
+import { randomBytes } from 'crypto';
 import { exec } from 'child_process';
 import { platform } from 'os';
 import {
@@ -22,7 +23,9 @@ function openBrowser(url: string) {
 const { flags } = parseArgs();
 const scope = flags.write ? SCOPE_WRITE : SCOPE_READ;
 const client = newOAuthClient();
+const oauthState = randomBytes(16).toString('hex');
 const authUrl = client.generateAuthUrl({
+  state: oauthState,
   access_type: 'offline',
   prompt: 'consent',
   scope: [scope],
@@ -32,6 +35,11 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://localhost:${REDIRECT_PORT}`);
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
+  if (url.searchParams.get('state') !== oauthState) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    res.end('Invalid state.');
+    return;
+  }
   if (error || !code) {
     res.writeHead(400, { 'Content-Type': 'text/plain' });
     res.end(`Authorization failed: ${error || 'no code returned'}`);
@@ -58,7 +66,7 @@ const server = createServer(async (req, res) => {
   server.close();
 });
 
-server.listen(REDIRECT_PORT, () => {
+server.listen(REDIRECT_PORT, '127.0.0.1', () => {
   console.log(`Listening on http://localhost:${REDIRECT_PORT} for the OAuth callback...`);
   console.log(`Requesting scope: ${scope}`);
   openBrowser(authUrl);

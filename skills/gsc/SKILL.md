@@ -1,7 +1,7 @@
 ---
 name: gsc
 description: Pull and analyze Google Search Console data for any site. Use when the user wants to check search performance, find indexing issues, analyze queries/pages/clicks, or audit their Google visibility. Handles OAuth setup, data pulling, URL inspection, and sitemap management.
-argument-hint: "[action: pull | inspect | audit | setup] [--site domain] [--days N]"
+argument-hint: "[action: pull | inspect | sitemaps | audit | setup] [--site domain] [--days N]"
 allowed-tools: Read, Bash, Glob, Grep, Write, Agent, WebSearch
 ---
 
@@ -40,12 +40,19 @@ Default 28 days, configurable with `--days`.
 
 ```bash
 npx tsx <skill-dir>/scripts/pull.ts --site sc-domain:example.com --days 28
+# explicit range (overrides --days), full page coverage, custom output file
+npx tsx <skill-dir>/scripts/pull.ts --site sc-domain:example.com --start 2026-07-01 --end 2026-09-28 --pages 25000 --out data/gsc-current.json
+# full query+page dataset for cannibalization work
+npx tsx <skill-dir>/scripts/pull.ts --site sc-domain:example.com --dims query,page --out data/gsc-qp.json
 ```
 
-Run from the project root. Output goes to `./data/gsc-queries.json` in the **current working directory**. The script fetches (paginating with `startRow`):
+Run from the project root. Output goes to `./data/gsc-queries.json` in the **current working directory** unless `--out <path>` is given. The script fetches (paginating with `startRow`):
 - Top 500 queries with clicks, impressions, CTR, position (`--queries N`)
-- Top 200 pages with the same metrics (`--pages N`)
+- Top 200 pages with the same metrics (`--pages N`; use `--pages 25000` for full page coverage)
 - Per-page query breakdown for the top 30 pages (`--top-pages N`)
+- With `--dims query,page`: the full query+page dataset (25,000 rows per request, paginated) in a `queryPages` array. This can be large and counts against load quotas.
+
+Flags: `--start YYYY-MM-DD` and `--end YYYY-MM-DD` override `--days`; `--out <path>` sets the output file (default `data/gsc-queries.json`).
 
 Search Analytics API notes:
 - Data lags by about 2 days; the script ends the range 2 days back.
@@ -108,7 +115,7 @@ Full GSC audit. Combines pull + inspect on key pages:
 3. Inspect 10-15 representative URLs (homepage, key landing pages, a sample per pSEO template)
 4. Report: indexed vs not indexed per template, crawl issues, sitemap problems, quick wins
 
-Save audit output to `data/gsc-deep.json`.
+Save the audit pull with `--out data/gsc-deep.json`.
 
 ### Post-launch monitoring (pSEO)
 
@@ -132,7 +139,7 @@ If OAuth tokens don't exist:
    ```bash
    npx tsx <skill-dir>/scripts/auth.ts
    ```
-   It listens on `localhost:3456` for the callback and saves tokens to `~/.config/gsc-oauth-tokens.json` (mode 600).
+   It listens on `127.0.0.1:3456` for the callback (checking a random OAuth `state`) and saves tokens to `~/.config/gsc-oauth-tokens.json` (mode 600).
 
 3. **Scope** - default is `https://www.googleapis.com/auth/webmasters.readonly`, enough for search analytics and URL inspection. Only for sitemap submit/delete, re-run with the full scope:
    ```bash
@@ -155,6 +162,6 @@ const sc = getSearchConsole(); // tokens auto-refresh and persist
 
 ## Output
 
-Save pulled data to `data/gsc-queries.json` (or `data/gsc-deep.json` for audits) in the project directory. Add `data/` to `.gitignore` if not already there.
+Pulled data goes to `data/gsc-queries.json` by default (use `--out data/gsc-deep.json` for audits) in the project directory. Add `data/` to `.gitignore` if not already there.
 
 After analysis, present findings as actionable items sorted by impact. Focus on what can be fixed in code (titles, descriptions, canonicals, structured data, internal linking, data sufficiency) rather than off-page factors.

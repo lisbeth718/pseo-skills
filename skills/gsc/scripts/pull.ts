@@ -1,8 +1,12 @@
 // Pull Search Analytics data. Writes ./data/gsc-queries.json in the current directory.
 // Usage: npx tsx pull.ts --site sc-domain:example.com [--days 28]
+//        [--start YYYY-MM-DD --end YYYY-MM-DD]   (override --days)
 //        [--queries 500] [--pages 200] [--top-pages 30]
+//        [--out data/gsc-queries.json] [--dims query,page]
+// --pages 25000 pulls every page. --dims query,page adds a full query+page
+// dataset (paginated, 25,000 rows per request) as `queryPages`.
 import { mkdirSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { getSearchConsole, parseArgs, sleep } from './lib/auth.js';
 
 const { flags } = parseArgs();
@@ -11,7 +15,24 @@ if (!site) {
   console.error('Usage: npx tsx pull.ts --site sc-domain:example.com [--days 28]');
   process.exit(1);
 }
-const days = Number(flags.days || 28);
+const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+for (const k of ['start', 'end']) {
+  if (flags[k] !== undefined && !dateRe.test(String(flags[k]))) {
+    console.error(`--${k} must be YYYY-MM-DD`);
+    process.exit(1);
+  }
+}
+if (flags.dims !== undefined && flags.dims !== 'query,page') {
+  console.error('--dims only supports "query,page"');
+  process.exit(1);
+}
+if (flags.out !== undefined && typeof flags.out !== 'string') {
+  console.error('--out needs a path');
+  process.exit(1);
+}
+const daysFlag = Number(flags.days || 28);
+const outPath = (flags.out as string) || join('data', 'gsc-queries.json');
+const withQueryPages = flags.dims === 'query,page';
 const maxQueries = Number(flags.queries || 500);
 const maxPages = Number(flags.pages || 200);
 const topPages = Number(flags['top-pages'] || 30);
@@ -21,8 +42,15 @@ const PAGE_SIZE = 25000; // API max rowLimit
 
 // Search Analytics data lags by about 2 days; end the range 2 days back.
 const iso = (d: Date) => d.toISOString().slice(0, 10);
-const end = new Date(Date.now() - 2 * 86400000);
-const start = new Date(end.getTime() - (days - 1) * 86400000);
+const end = flags.end ? new Date(`${flags.end}T00:00:00Z`) : new Date(Date.now() - 2 * 86400000);
+const start = flags.start
+  ? new Date(`${flags.start}T00:00:00Z`)
+  : new Date(end.getTime() - (daysFlag - 1) * 86400000);
+if (start > end) {
+  console.error('--start must not be after --end');
+  process.exit(1);
+}
+const days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
 
 type Row = { keys: string[]; clicks: number; impressions: number; ctr: number; position: number };
 
@@ -76,6 +104,13 @@ async function main() {
     await sleep(200);
   }
 
+  let queryPages: ReturnType<typeof fmt>[] | undefined;
+  if (withQueryPages) {
+    const qp = await query(['query', 'page'], Infinity);
+    queryPages = qp.map(fmt);
+    console.log(`queryPages: ${queryPages.length}`);
+  }
+
   const out = {
     site,
     range: { start: iso(start), end: iso(end), days },
@@ -83,11 +118,11 @@ async function main() {
     queries: queries.map(fmt),
     pages: pages.map(fmt),
     pageQueries,
+    ...(queryPages ? { queryPages } : {}),
   };
-  mkdirSync('data', { recursive: true });
-  const file = join('data', 'gsc-queries.json');
-  writeFileSync(file, JSON.stringify(out, null, 2));
-  console.log(`Wrote ${file}`);
+  mkdirSync(dirname(outPath), { recursive: true });
+  writeFileSync(outPath, JSON.stringify(out, null, 2));
+  console.log(`Wrote ${outPath}`);
 }
 
 main().catch((e) => {
