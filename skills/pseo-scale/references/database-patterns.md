@@ -16,7 +16,9 @@ SQLite is insufficient at scale due to single-writer lock and lack of connection
 
 ```sql
 -- Lightweight query for listing, sitemap, related pages
--- Returns only PageIndex fields — no body, FAQs, or images
+-- last_modified must mean "last significant content change" if it feeds sitemap <lastmod>
+-- (Google ignores lastmod unless it is verifiably accurate). Don't bump it on deploys or re-scores.
+-- Returns only PageIndex fields - no body, FAQs, or images
 SELECT slug, title, h1, meta_description, canonical_path,
        category, subcategory, last_modified
 FROM pages
@@ -29,7 +31,7 @@ LIMIT 50 OFFSET 0;
 ### Full-Tier Query (Per-Page Only)
 
 ```sql
--- Full page content — only load one at a time
+-- Full page content - only load one at a time
 SELECT *
 FROM pages
 WHERE slug = $1 AND status = 'published';
@@ -37,7 +39,7 @@ WHERE slug = $1 AND status = 'published';
 
 ### Cursor-Based Pagination for Sitemap
 
-At 100K rows, `OFFSET` becomes slow. Use cursor-based (keyset) pagination:
+At 100K rows, `OFFSET` becomes slow. Use cursor-based (keyset) pagination. Each sitemap file holds at most 50,000 URLs (50MB uncompressed), so use batches that fit a file and write a sitemap index over them. Only select indexable, canonical, published rows, and emit only `<loc>` and a truthful `<lastmod>` (Google ignores `changefreq` and `priority`):
 
 ```sql
 -- First page

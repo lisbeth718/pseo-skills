@@ -50,6 +50,7 @@ CREATE TABLE pages (
   category      TEXT NOT NULL,
   subcategory   TEXT,
   status        TEXT DEFAULT 'published',
+  monthly_traffic INTEGER DEFAULT 0,  -- from analytics/GSC; used to rank pre-build and cache warming
   last_modified TIMESTAMPTZ NOT NULL,
   published_at  TIMESTAMPTZ,
   -- Heavy fields (only loaded per-page)
@@ -174,7 +175,7 @@ See `references/vercel-optimization.md` for Vercel-specific build cost and ISR o
 
 ## 2. Data Sufficiency Gating
 
-At 100K pages, many combinations will produce thin content. Gate page generation BEFORE build time — don't create pages that will fail quality checks.
+At 100K pages, many combinations will produce thin content. Gate page generation BEFORE build time - don't create pages that will fail quality checks.
 
 ### Sufficiency Score
 
@@ -187,18 +188,18 @@ function computeSufficiencyScore(record: RawRecord): number {
     hasTitle: 10,
     hasDescription: 10,           // > 50 chars
     hasBodyContent: 20,           // > 200 words
-    hasFAQs: 15,                  // >= 3 Q&A pairs
+    hasRealUserQuestions: 15,     // >= 3 questions sourced from real user data (support tickets, GSC queries, forums)
     hasUniqueAttributes: 15,      // >= 3 non-null structured attributes
     hasImage: 5,
     hasCategory: 10,
-    hasNumericData: 10,           // stats, ratings, prices — LLM citation signal
+    hasNumericData: 10,           // stats, ratings, prices
     hasSourceCitation: 5,         // data provenance for E-E-A-T
   };
 
   if (record.title?.length > 10) score += weights.hasTitle;
   if (record.description?.length > 50) score += weights.hasDescription;
   if (wordCount(record.bodyContent) > 200) score += weights.hasBodyContent;
-  if (record.faqs?.length >= 3) score += weights.hasFAQs;
+  if (record.userQuestions?.length >= 3) score += weights.hasRealUserQuestions;
   // ... etc
 
   return score; // 0-100
@@ -209,10 +210,10 @@ function computeSufficiencyScore(record: RawRecord): number {
 
 | Score | Action |
 |-------|--------|
-| 80-100 | Generate page — sufficient data |
-| 60-79 | Generate page with enrichment flag — mark for content pipeline |
-| 40-59 | Hold — do not generate until data is enriched |
-| 0-39 | Reject — insufficient data, do not generate |
+| 80-100 | Generate page - sufficient data |
+| 60-79 | Generate page with enrichment flag - mark for content pipeline |
+| 40-59 | Hold - do not generate until data is enriched |
+| 0-39 | Reject - insufficient data, do not generate |
 
 **Store the score in the database** (`data_sufficiency_score` column) so you can:
 - Query how many pages are gated vs. ready
@@ -244,7 +245,7 @@ function gateCombination(dimA: RawRecord, dimB: RawRecord): boolean {
 
 ## 3. Content Enrichment Pipeline
 
-At 100K pages, you can't manually write intros, FAQs, and descriptions. You need an automated enrichment pipeline with quality controls.
+At 100K pages, you can't manually write intros and descriptions. You need an automated enrichment pipeline with quality controls.
 
 ### Pipeline Architecture
 
@@ -255,7 +256,7 @@ Raw data (DB/CMS/API)
 Data sufficiency scoring ──→ Reject/hold insufficient records
     │
     ▼
-Automated enrichment ──→ Generate intros, FAQs, summaries from structured data
+Automated enrichment ──→ Generate intros and summaries from structured data
     │
     ▼
 Quality sampling ──→ Human reviews a random sample (5-10%) per batch
@@ -274,21 +275,24 @@ Before reaching for LLM generation, exhaust structured data enrichment:
 - **Template composition from multiple fields**: Combine 3+ data fields into prose. Not `"Best {service} in {city}"` but structured sentences using attributes, stats, and category context.
 - **Aggregation**: Roll up child data into parent summaries (category stats, comparison tables, top-N lists)
 - **Cross-referencing**: Enrich records by joining data sources (product + reviews, service + location demographics, listing + category averages)
-- **FAQ generation from data patterns**: Turn common attribute variations into Q&A pairs ("How much does X cost in Y?" → answer from price data)
 - **Comparison data**: Auto-generate comparison sections from sibling records in the same category
 
 ### LLM-Assisted Enrichment
 
 If structured enrichment is insufficient, LLM-assisted generation is acceptable under strict conditions:
 
-1. **Never generate the entire page content** — LLM fills gaps in an otherwise data-driven page
-2. **Always ground in real data** — the LLM prompt includes the record's actual attributes, stats, and context
-3. **Human review sampling** — review 5-10% of LLM-generated content per batch before publishing
-4. **Store the generation metadata** — track which fields were LLM-generated vs. sourced from data
-5. **Apply quality guard after enrichment** — run pseo-quality-guard on enriched content before publishing
-6. **Regenerate periodically** — stale LLM content should be refreshed when underlying data changes
+1. **Never generate the entire page content** - LLM fills gaps in an otherwise data-driven page
+2. **Always ground in real data** - the LLM prompt includes the record's actual attributes, stats, and context
+3. **Human review sampling** - review 5-10% of LLM-generated content per batch before publishing
+4. **Store the generation metadata** - track which fields were LLM-generated vs. sourced from data
+5. **Apply quality guard after enrichment** - run pseo-quality-guard on enriched content before publishing
+6. **Regenerate periodically** - stale LLM content should be refreshed when underlying data changes
 
-**Google's position (2025):** AI-generated content is acceptable if it provides genuine value. The risk is not the generation method but the output quality. Scaled LLM generation that produces interchangeable pages will trigger the same penalties as template spam.
+**Google's position (2026):** Using generative AI is not a violation by itself, but generating many pages "without adding value for users" may violate the scaled content abuse policy, "no matter how it's created". Google asks you to manually fact-check and review all AI-generated content, including titles, meta descriptions, structured data and alt text. The Quality Rater Guidelines (Sep 2025, sections 4.6.5 and 4.6.6) rate pages Lowest when main content is auto or AI generated with little effort, originality or added value.
+
+Two policy lines matter directly for pSEO at this scale:
+- Google's AI optimization guide (2026-05-15) says creating separate pages for every query variation "or fan-out queries" primarily to manipulate rankings or AI responses violates the scaled content abuse policy. Don't generate a page per phrasing.
+- The doorway policy names "substantially similar pages that are closer to search results than a clearly defined, browseable hierarchy" and pages targeting specific regions or cities that funnel users to one page. Combination gating (section 2) is the defense.
 
 ## 4. Incremental Validation
 
@@ -302,8 +306,7 @@ Only validate pages that changed since the last validation run:
 async function getChangedPages(since: Date): Promise<string[]> {
   const result = await db.query(
     `SELECT slug FROM pages
-     WHERE last_modified > $1
-       OR last_validated IS NULL
+     WHERE (last_modified > $1 OR last_validated IS NULL)
        AND status = 'published'`,
     [since]
   );
@@ -351,7 +354,7 @@ const results = await Promise.all(workers);
 
 ## 5. Crawl Budget Management
 
-At 100K pages, Google won't crawl everything immediately. Crawl budget — the number of pages Google crawls per day — becomes a constraint.
+At 100K pages, Google won't crawl everything immediately. Crawl budget - the number of pages Google crawls per day - becomes a constraint.
 
 ### Sitemap Submission Strategy
 
@@ -363,35 +366,50 @@ sitemap-index.xml
 └── ...
 ```
 
+**Sitemap rules (Google build-sitemap doc):**
+- 50,000 URLs or 50MB uncompressed per file. Search Console accepts up to 500 sitemap index files per site; an index holds up to 50,000 entries.
+- Google ignores `<priority>` and `<changefreq>`. Don't emit them.
+- `<lastmod>` counts only if it is consistently and verifiably accurate: the last significant change to main content, structured data or links. Store a real `content_modified_at` and use it. Never `new Date()` at build time, and never bump it on every deploy.
+- Next.js `generateSitemaps` serves chunks at `/sitemap/[id].xml` but does not create an index. Write the index yourself (route handler) and submit it.
+
 **Submission cadence:**
 - Submit the sitemap index to both Google Search Console and Bing Webmaster Tools
 - Update individual category sitemaps as pages are added
-- Don't submit all 100K URLs at once — Google throttles crawling for new sites with sudden URL spikes
+- Add URLs in category waves rather than all 100K at once. This is operational advice (so you can verify quality and indexing per wave), not a documented Google throttle.
 
 **Programmatic sitemap submission:**
 ```typescript
-// Use Google Indexing API for high-priority pages (job postings, livestreams)
-// For standard pages, rely on sitemap discovery + Search Console
+// Google Indexing API: only JobPosting and BroadcastEvent-in-VideoObject pages
+//   (default quota 200/day). Using it for other pSEO pages is against its terms.
+// IndexNow: notifies Bing, Yandex, Naver, Seznam, Yep, Amazon. Google does NOT participate.
+// For standard pages on Google, rely on sitemap discovery, internal links, and accurate lastmod.
 
 // Batch sitemap updates by category
 async function updateCategorySitemap(category: string) {
   const pages = await getPagesByCategory(category, { limit: 50000 });
-  const xml = generateSitemapXml(pages);
+  const xml = generateSitemapXml(pages); // <loc> + real <lastmod> only
   await writeFile(`public/sitemap-${category}.xml`, xml);
 }
 ```
 
 ### Crawl Budget Optimization
 
-- **Prioritize high-value pages**: Set `priority` in sitemap to guide Googlebot (0.8 for hubs, 0.6 for pages with high sufficiency scores, 0.4 for the rest)
+Google's crawl budget doc applies mainly to sites with 1M+ pages changing weekly, 10K+ pages changing daily, or many "Discovered - currently not indexed" URLs. Budget = crawl capacity limit (host load, shared across all Google crawlers) + crawl demand. Below that, content quality and internal linking matter more than budget tuning.
+
+- **Prioritize through structure, not `priority`**: Google ignores sitemap `priority`. Use internal links from hubs and shallow click depth to signal importance.
 - **Remove low-quality pages from sitemap**: Pages with sufficiency score < 60 should not be in the sitemap
-- **Fix crawl waste**: Ensure no soft 404s, no redirect chains, no parameter-based duplicates — all waste crawl budget
-- **Server response time**: Keep TTFB < 500ms. Slow servers get less crawl budget.
+- **Fix crawl waste**: Return real 404/410 for removed or no-data pages, eliminate soft 404s, avoid redirect chains, and kill parameter-based duplicates
+- **Faceted navigation**: Block facets you don't want indexed in robots.txt. For indexable facets, return 404 for empty, duplicate and nonsensical combinations at the URL itself. In Next.js 16, run the existence check before streaming starts (or in `proxy.ts`), otherwise `notFound()` yields 200 + noindex, a soft 404.
+- **Use robots.txt, not noindex, to save budget**: Google still requests noindex pages. Don't use robots.txt to temporarily reallocate budget.
+- **Support conditional requests**: ETag / Last-Modified and 304 responses cut crawl cost
+- **HTML weight**: Googlebot fetches only the first 2MB of uncompressed HTML. Inline JSON, RSC payloads and huge tables on templates can be truncated.
+- **Server response time**: Keep TTFB < 500ms. Slow servers get less crawl capacity.
+- **Emergency reduction**: `Retry-After` is documented for temporarily reducing crawl load during an incident
 - **Monitor crawl stats**: Check Google Search Console → Settings → Crawl stats weekly. If crawl rate drops, investigate.
 
 ### Indexing Rate Expectations
 
-Google does not guarantee indexing all pages. Realistic expectations:
+Google does not guarantee indexing all pages. The figures below are rough rules of thumb from practice, not Google numbers:
 
 | Site authority | Pages submitted | Likely indexed (6 months) |
 |---------------|----------------|--------------------------|
@@ -402,8 +420,9 @@ Google does not guarantee indexing all pages. Realistic expectations:
 **If indexing rate is low:**
 1. Improve content quality on indexed pages first
 2. Earn more backlinks to category hubs
-3. Reduce total page count (prune thin pages) — a smaller, higher-quality corpus often indexes better than a large, mediocre one
+3. Reduce total page count (prune thin pages) - a smaller, higher-quality corpus often indexes better than a large, mediocre one
 4. Ensure internal linking reaches every page within 3 clicks
+5. After fixing duplicate-content issues, Google may keep pages in a duplicate cluster for up to two weeks. Request Indexing is quota-limited, so reserve it for your most important URLs.
 
 ## 6. Monitoring at Scale
 
@@ -416,7 +435,7 @@ At 100K pages, you can't manually check pages. Build automated monitoring.
 | Pages indexed | Google Search Console API | Drops > 5% week-over-week |
 | Crawl rate | Google Search Console API | Drops > 20% |
 | Crawl errors (5xx, 404) | Server logs, GSC | > 1% of total pages |
-| CWV regressions | CrUX API or RUM | LCP > 4s or CLS > 0.25 on any template |
+| CWV regressions | CrUX API or RUM (75th percentile) | Any template leaves "good" (LCP > 2.5s, INP > 200ms, CLS > 0.1); page on "poor" (LCP > 4s, CLS > 0.25) |
 | Build duration | CI/CD logs | > 2x baseline |
 | Build memory peak | CI/CD logs | > 80% of available memory |
 | Page count by status | Database | Published count deviates from expected |
@@ -425,7 +444,7 @@ At 100K pages, you can't manually check pages. Build automated monitoring.
 ### Automated Monitoring Script
 
 ```typescript
-// scripts/monitor-pseo.ts — run daily via cron or CI
+// scripts/monitor-pseo.ts - run daily via cron or CI
 async function monitor() {
   const metrics = {
     totalPublished: await db.query("SELECT COUNT(*) FROM pages WHERE status = 'published'"),
@@ -454,9 +473,9 @@ async function monitor() {
 
 At 100K pages, manual Search Console checks are impractical. Use the API:
 
-- **Indexing status**: Query the URL Inspection API in batches to check indexing status of new pages
+- **Indexing status**: Query the URL Inspection API for a sample of new pages per template. Quota is 2,000 requests/day and 600/min per site, so you can't inspect 100K URLs; use sitemap-level indexing reports for the bulk and inspect samples.
 - **Performance data**: Pull clicks, impressions, CTR by page template to identify underperforming page types
-- **Coverage issues**: Monitor for "Crawled — currently not indexed" and "Discovered — currently not indexed" trends
+- **Coverage issues**: Monitor for "Crawled - currently not indexed" and "Discovered - currently not indexed" trends
 
 ## 7. Edge and CDN Architecture
 
@@ -484,8 +503,9 @@ Client → CDN Edge → Origin (Next.js/framework)
 
 **Edge rendering (if supported):**
 - Deploy to edge runtimes (Vercel Edge, Cloudflare Workers) for < 50ms TTFB globally
-- Not all frameworks support edge rendering — check compatibility
+- Not all frameworks support edge rendering - check compatibility
 - Edge functions have memory limits (~128MB) that constrain complex data operations
+- In Next.js 16, `proxy.ts` replaces `middleware.ts` and runs on Node.js; `middleware.ts` (Edge only) is deprecated
 
 ### Database Connection from Edge
 
@@ -503,23 +523,29 @@ At 100K pages, the build process itself needs architecture.
 ```typescript
 // At 100K, only pre-build the most important pages
 export async function generateStaticParams() {
-  // Pre-build: hub pages + top 1K pages by traffic/priority
-  const hubs = await getAllCategories();
+  // Pre-build: top 1K pages by traffic (hub params live in app/[category]/page.tsx)
   const topPages = await db.query(
     `SELECT slug, category FROM pages
      WHERE status = 'published' AND data_sufficiency_score >= 80
-     ORDER BY priority DESC LIMIT 1000`
+     ORDER BY monthly_traffic DESC LIMIT 1000`
   );
-  return [
-    ...hubs.map(h => ({ category: h.slug })),
-    ...topPages.map(p => ({ category: p.category, slug: p.slug })),
-  ];
+  return topPages.map(p => ({ category: p.category, slug: p.slug }));
+}
+
+// app/[category]/page.tsx - hubs have their own generateStaticParams
+export async function generateStaticParams() {
+  const hubs = await getAllCategories();
+  return hubs.map(h => ({ category: h.slug }));
 }
 
 // ISR handles the remaining 99K pages on first request
 export const dynamicParams = true;
 export const revalidate = 86400; // 24 hours
 ```
+
+This segment-config form works without Cache Components. With `cacheComponents: true` (Next.js 16.4 default in `create-next-app`, planned default in Next.js 17), use `"use cache"` with `cacheLife()` and `cacheTag()` on the data function instead, and note that `generateStaticParams` **must return at least one param** (an empty array is a build error; use a placeholder plus `notFound()` if needed). `export const ensureStatic = "shell"` fails the build if dynamic content leaks into a template. `revalidateTag` now takes a cache-life profile as its second argument; `updateTag()` is for read-your-writes in Server Actions.
+
+**Status codes for long-tail ISR pages:** streaming responses start with 200. If a not-found check runs after streaming begins, the page is 200 + noindex (soft 404 risk). Verify the record exists before any Suspense fallback or `loading.tsx` renders. Next.js 16.3's instant loading shell for non-prerendered URLs has the same caveat.
 
 ### Build Time Budget
 
@@ -530,7 +556,7 @@ export const revalidate = 86400; // 24 hours
 | 10K | 30-90 minutes | 6-8GB |
 | 100K (DON'T DO THIS) | 5-15 hours | 16GB+ |
 
-**Rule: Never pre-build more than 10K pages.** Use ISR for everything else.
+**Rule: Never pre-build more than a few thousand pages.** Vercel caps builds at 45 minutes per deployment on all plans, so the 10K row above is out of reach there. Use ISR or on-demand rendering for everything else.
 
 For Vercel-specific cost optimization (build minutes, function costs, preview deploys), see `references/vercel-optimization.md`.
 
@@ -539,18 +565,18 @@ For Vercel-specific cost optimization (build minutes, function costs, preview de
 After deploying, the ISR cache is cold. The first visitor to each page triggers generation. For critical pages:
 
 ```typescript
-// scripts/warm-cache.ts — run after deploy
+// scripts/warm-cache.ts - run after deploy
 async function warmCache() {
   const priorityPages = await db.query(
     `SELECT canonical_path FROM pages
      WHERE data_sufficiency_score >= 80 AND status = 'published'
-     ORDER BY priority DESC LIMIT 5000`
+     ORDER BY monthly_traffic DESC LIMIT 5000`
   );
 
   // Hit each page to trigger ISR generation (rate-limited)
   for (const page of priorityPages) {
     await fetch(`${baseUrl}${page.canonical_path}`);
-    await sleep(100); // 10 pages/second — don't DDoS yourself
+    await sleep(100); // 10 pages/second - don't DDoS yourself
   }
 }
 ```
@@ -565,12 +591,14 @@ async function warmCache() {
 - [ ] Content enrichment pipeline exists (structured data first, LLM-assisted only with review)
 - [ ] Incremental validation is implemented (delta + periodic full scan)
 - [ ] Content hashes are stored for change detection
-- [ ] Sitemap is split by category with index file
+- [ ] Sitemap is split by category with a hand-written index file (Next.js `generateSitemaps` does not create one)
+- [ ] Sitemap has no `priority`/`changefreq`, and `lastmod` is a verifiable content-modified date
+- [ ] Empty/no-data combination URLs return a real 404 before streaming starts
 - [ ] Sitemap excludes pages below sufficiency threshold
 - [ ] Crawl budget is monitored via Search Console
 - [ ] Monitoring script runs daily with alerts
 - [ ] CDN caching is configured with appropriate TTLs
-- [ ] ISR handles the long tail (only top pages pre-built)
+- [ ] ISR handles the long tail (only top pages pre-built, build stays under Vercel's 45 min limit)
 - [ ] Cache warm-up script exists for post-deploy
 - [ ] Connection pooling is configured for build-time queries
 - [ ] No function loads > 10K full page records into memory
@@ -579,5 +607,5 @@ async function warmCache() {
 
 - **Extends**: pseo-data (replaces in-memory patterns with database), pseo-performance (adds CDN/edge and scale-specific build strategy), pseo-quality-guard (adds incremental validation)
 - **Depends on**: All content and structure skills must be in place before scaling
-- **Validated by**: pseo-quality-guard (quality doesn't change — scale does)
+- **Validated by**: pseo-quality-guard (quality doesn't change - scale does)
 - **Works with**: pseo-orchestrate (scale considerations at every phase)

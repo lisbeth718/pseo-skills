@@ -10,9 +10,19 @@ Large pSEO sites (10K-100K+ pages) can generate massive Vercel bills through bui
 | Function duration | ISR revalidation, API routes | 100K ISR pages × 1s avg = 100K function-seconds/day |
 | Function invocations | Each ISR page hit on cold cache | First visitor to each page = 1 invocation |
 | Bandwidth | Page weight × pageviews | Large pages + high traffic = expensive |
-| Edge middleware | Runs on every request | Complex middleware = per-request cost |
+| Proxy / middleware | Runs on every request (`proxy.ts` in Next.js 16, replaces `middleware.ts`) | Complex logic = per-request cost |
 
 **The core insight**: Pre-building pages costs build minutes. Not pre-building costs function invocations. The optimal strategy depends on traffic patterns.
+
+## Hard Limits That Shape the Architecture
+
+From Vercel's limits page (updated 2026-09-16):
+
+- **Build time: 45 minutes per deployment, all plans.** Prerendering huge pSEO sets at build will hit this wall. Use ISR or on-demand rendering with a small seed set.
+- **2,048 routes per deployment**, and `vercel.json` rewrites, redirects and headers count toward it. Use pattern-based redirects, not one rule per URL.
+- Static file upload via CLI: 100MB (Hobby) or 1GB (Pro).
+- Build cache: 1.5-4.75GB depending on machine.
+- Runtime logs are kept 1 hour (Hobby) or 1 day (Pro). Ship logs elsewhere if you need crawl analysis.
 
 ## ISR-First Architecture (Recommended for 10K+)
 
@@ -28,15 +38,15 @@ export async function generateStaticParams() {
   // - Top 100-500 pages by traffic
   // - Homepage, about, contact
 
-  // Tier 2: Pre-build on Pro/Enterprise plans only
+  // Tier 2: Optionally raise the production tier if build time allows
   // - Top 1000-2000 pages
 
   // Tier 3: Never pre-build (ISR only)
   // - Long-tail pages (the other 98K)
 
   const tier = process.env.VERCEL_ENV === 'production'
-    ? (process.env.VERCEL_PLAN === 'enterprise' ? 2000 : 500)
-    : 50; // minimal for preview deploys
+    ? 500   // raise only if the build stays well under the 45 minute limit
+    : 50;   // minimal for preview deploys
 
   const topPages = await db.query(`
     SELECT slug, category FROM pages
@@ -54,6 +64,12 @@ export async function generateStaticParams() {
 export const dynamicParams = true; // Allow ISR for non-pre-built pages
 export const revalidate = 86400;   // 24h default, tune per page type
 ```
+
+This is the segment-config form, valid without Cache Components. With `cacheComponents: true` (default in `create-next-app` from Next.js 16.4, planned default in Next.js 17):
+- `generateStaticParams` **must return at least one param**. An empty array is a build error. Return a placeholder param and call `notFound()` for it if you have no real seed set.
+- Cache data with `"use cache"`, `cacheLife()` and `cacheTag()` instead of `revalidate`/`unstable_cache`.
+- `export const ensureStatic = "shell"` fails the build if dynamic content sneaks into a template route.
+- Check that a missing record 404s before streaming starts (before any Suspense fallback or `loading.tsx`). After streaming begins, `notFound()` yields 200 + `noindex`, which Google may treat as a soft 404.
 
 ### Preview Deploy Optimization
 
@@ -80,15 +96,18 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.REVALIDATION_SECRET}`) {
+  const secret = process.env.REVALIDATION_SECRET;
+  if (!secret || authHeader !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { path, tag, type = 'path' } = await request.json();
 
   if (type === 'tag' && tag) {
-    // Revalidate all pages with this cache tag
-    revalidateTag(tag);
+    // Revalidate all pages with this cache tag.
+    // Next.js 16: revalidateTag requires a cache-life profile as 2nd argument.
+    // (Use updateTag(tag) instead inside Server Actions for read-your-writes.)
+    revalidateTag(tag, 'max');
     return NextResponse.json({ revalidated: true, tag });
   }
 
@@ -185,19 +204,15 @@ const pageWithRelated = await getPageWithRelated(slug);
 
 ### Function Region Optimization
 
-```javascript
-// next.config.js
-module.exports = {
-  experimental: {
-    // Deploy functions close to your database
-    serverActions: {
-      allowedOrigins: ['example.com'],
-    },
-  },
-};
+Set the function region in `vercel.json` (see Vercel's function region docs) so functions run next to your database:
+
+```json
+{
+  "regions": ["iad1"]
+}
 ```
 
-Or use `export const runtime = 'edge'` for pages that can run on the edge (no Node.js dependencies).
+Or use `export const runtime = 'edge'` for pages that can run on the edge (no Node.js dependencies). Check compatibility with your Next.js version and Cache Components setting first.
 
 ### Reduce Cold Starts
 
@@ -217,15 +232,16 @@ const db = new Pool({ /* config */ }); // Module-level, not per-request
 ```typescript
 import { unstable_cache } from 'next/cache';
 
-// Cache expensive data layer calls
-export const getCachedPage = unstable_cache(
-  async (slug: string) => getPageFromDB(slug),
-  ['page-data'],
-  {
-    revalidate: 86400,      // 24h
-    tags: [`page:${slug}`]  // Enable targeted invalidation
-  }
-);
+// Without Cache Components: cache expensive data layer calls
+export const getCachedPage = (slug: string) =>
+  unstable_cache(
+    async () => getPageFromDB(slug),
+    ['page-data', slug],
+    {
+      revalidate: 86400,      // 24h
+      tags: [`page:${slug}`], // Enable targeted invalidation
+    }
+  )();
 
 // Cache index data more aggressively
 export const getCachedCategories = unstable_cache(
@@ -235,18 +251,35 @@ export const getCachedCategories = unstable_cache(
 );
 ```
 
-### CDN Cache Headers
+With Cache Components (`cacheComponents: true`), use the `"use cache"` directive instead:
 
 ```typescript
-// Maximize edge caching
-export async function generateMetadata() {
-  return {
-    other: {
-      'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=604800',
-    },
-  };
+import { cacheLife, cacheTag } from 'next/cache';
+
+export async function getCachedPage(slug: string) {
+  'use cache';
+  cacheLife('days');
+  cacheTag(`page:${slug}`);
+  return getPageFromDB(slug);
 }
 ```
+
+### CDN Cache Headers
+
+Next.js and Vercel set `Cache-Control` for ISR and cached pages themselves, and a `Cache-Control` set via `headers()` in `next.config` is overwritten for pages in production. Control page caching with `revalidate` (or `cacheLife` with Cache Components) instead.
+
+Set a custom `Cache-Control` only for route handlers or proxy responses, for example:
+
+```typescript
+// app/api/data/route.ts
+export async function GET() {
+  return Response.json(await getData(), {
+    headers: { 'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=604800' },
+  });
+}
+```
+
+Header rules in config count toward the 2,048-routes-per-deployment limit, so use one pattern rule, not one per URL.
 
 ## Build Size Optimization
 
@@ -331,12 +364,14 @@ For a 100K page pSEO site with 1M monthly pageviews:
 ## Quick Wins Checklist
 
 - [ ] Preview deploys build < 50 pages
-- [ ] Production builds < 2K pre-built pages (use ISR for rest)
-- [ ] `revalidate` is set to 24h+ or `false` with on-demand revalidation
+- [ ] Production builds < 2K pre-built pages and well under the 45 minute build limit (use ISR for rest)
+- [ ] `vercel.json` redirects/rewrites/headers are pattern-based (2,048 routes per deployment limit)
+- [ ] `revalidate` is set to 24h+ or `false` with on-demand revalidation (or `cacheLife`/`cacheTag` with Cache Components)
+- [ ] `generateStaticParams` returns at least one param if Cache Components is on
 - [ ] Data queries are parallelized and cached
 - [ ] No large JSON imports at build time
 - [ ] Function bundle size < 1MB per route
 - [ ] Edge runtime used where possible
-- [ ] CDN cache headers set (s-maxage)
+- [ ] Page caching controlled via revalidate/cacheLife; custom Cache-Control only on route handlers
 - [ ] Database connections are pooled
 - [ ] Build analytics tracked in CI

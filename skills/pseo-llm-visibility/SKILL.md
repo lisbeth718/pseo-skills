@@ -1,35 +1,64 @@
 ---
 name: pseo-llm-visibility
-description: Optimize programmatic SEO pages for visibility and citation in AI-generated answers from ChatGPT, Perplexity, Google AI Overviews, and other LLM-powered search. Use when optimizing for LLM citation, implementing llms.txt, configuring AI crawler access, structuring content for AI extraction, or when the user asks about generative engine optimization (GEO), AI search visibility, or getting cited by AI.
-argument-hint: "[focus: all | llms-txt | crawlers | content | schema | entities]"
+description: Optimize programmatic SEO pages for visibility in AI answers, separating what Google officially says affects AI Overviews/AI Mode (normal SEO fundamentals) from what helps other agents (ChatGPT, Claude, Perplexity). Use when configuring AI crawler access and robots.txt, deciding on llms.txt, controlling AI Overviews/AI Mode (nosnippet, Search Console opt-out), or when the user asks about GEO/AEO, AI search visibility, or getting cited by AI.
+argument-hint: "[focus: all | google-ai | llms-txt | crawlers | controls | content | entities]"
 allowed-tools: Read, Glob, Grep, Bash, Edit, Write
 ---
 
 # pSEO LLM Visibility
 
-Optimize programmatic pages for citation and visibility in AI-generated answers. This is a distinct layer on top of traditional SEO — different crawlers, different extraction patterns, different signals.
+Visibility in AI-generated answers. State as of 2026-10-12 (see https://github.com/lisbeth718/pseo-skills/blob/main/docs/research-2026-10.md). The key split: **Google AI features are driven by normal SEO**; other agents (ChatGPT, Claude, Perplexity, Apple, Meta) have their own crawlers and fewer documented rules.
 
 ## Why This Matters for pSEO
 
-- AI-driven search traffic is growing rapidly and represents a significant share of organic discovery
-- LLMs cite only a handful of domains per response vs. 10 blue links in traditional search
-- Traditional SEO rank is a weak predictor of AI citation — many cited pages rank outside the top 20 in Google
-- Content freshness, structure, and extractability matter more than backlinks for LLM visibility
-- Google AI Overviews appear on a large and growing share of searches, and most AI-assisted searches result in fewer outbound clicks
+- Heuristic (not a Google statement): AI answers tend to cite few sources per response, and some AI-assisted searches end without an outbound click
+- Google says AI Overviews and AI Mode are "rooted in our core Search ranking and quality systems", so thin or scaled pSEO pages are not rescued by AI formatting tricks
+- Other AI agents run their own crawlers; blocking them by accident removes you from their answers
+- Controls over how Google uses your content in AI features changed in 2026 (see section 3)
 
 ## Core Principles
 
-1. **Extractable, not just readable**: Content must be structured in self-contained chunks that LLMs can pull verbatim
-2. **Answer-first**: Lead with the direct answer, then provide supporting context
-3. **Entity-rich**: Reference entities and relationships, not just keywords
-4. **Multi-engine**: Optimize for Bing (ChatGPT), Google (AI Overviews), and direct AI crawlers (Perplexity) simultaneously
-5. **Machine-readable**: Schema, llms.txt, and clean HTML structure help LLMs understand page semantics
+1. **Google AI features = classic SEO**: indexed, snippet-eligible, crawlable, helpful, non-commodity pages. No extra technical requirements exist
+2. **Non-commodity content**: Google warns against recycling content that "could easily be produced by a generative AI model". Original data and real utility beat restated generics
+3. **Do not manufacture variations**: separate pages for every query variation or fan-out query, made to manipulate rankings or AI responses, violate the scaled content abuse policy
+4. **Separate audiences**: Google AI features (fundamentals only) vs other agents (crawler access, optional llms.txt, clean HTML)
+5. **Honest signals**: Google's spam policies now cover "attempting to manipulate generative AI responses". Inauthentic mentions and seeding are called ineffective
+
+## What Google Says (2026-05-15 AI optimization guide)
+
+Source: `developers.google.com/search/docs/fundamentals/ai-optimization-guide`, plus the AI features doc.
+
+**Does nothing for Google Search, AI Overviews or AI Mode:**
+- llms.txt and other special files or Markdown ("neither harm nor help", note added 2026-06-15)
+- Content chunking and rewriting content for AI
+- Special schema.org markup or over-focusing on structured data
+- Inauthentic mentions
+- Covering every long-tail or fan-out variation (AI understands synonyms)
+
+**What applies:**
+- Page is indexed and eligible to show in Search with a snippet; there are no additional technical requirements
+- Allow crawling in robots.txt and at the CDN/WAF level
+- Internal links, important content as text, images/video, structured data that matches visible text
+- Merchant Center and Business Profile kept current
+- Good page experience; AEO/GEO "is still SEO"
+
+No third-party tool has access to Google's ranking or AI systems, so treat tool-reported "AI visibility scores" as estimates.
 
 ## Implementation Steps
 
-### 1. Create llms.txt
+### 1. Fundamentals for Google AI features
 
-Place a Markdown file at the site root (`/llms.txt`) that guides LLMs to the most important content. This is a proposed standard gaining rapid adoption — think of it as a curated sitemap for AI.
+- Confirm pages are indexed and snippet-eligible (no `nosnippet`, no restrictive `max-snippet`)
+- Confirm Googlebot is not blocked in robots.txt, CDN, or WAF
+- Keep HTML lean: Googlebot for Search fetches only the first 2MB of uncompressed HTML, so avoid giant inline JSON or RSC payloads on pSEO templates
+- Do not generate extra near-duplicate pages per query variation (see pseo-quality-guard)
+- Add original, non-commodity value per page (proprietary data, calculations, real comparisons)
+
+### 2. llms.txt (cheap, optional, for non-Google agents)
+
+llms.txt is a plain Markdown file at `/llms.txt`. **Google Search ignores it.** No AI search provider (OpenAI, Anthropic, Perplexity) has officially said it uses llms.txt as a citation input. Reasons to still publish one: it costs little, the spec is maintained (llmstxt.org v2, modified 2026-08-10), agent tooling reads it (Chrome Lighthouse has an experimental "Agentic Browsing" category with an llms.txt discoverability audit, Chrome 150+), and AI labs publish their own docs this way.
+
+Do not expect a ranking or citation effect. Do not spend time maintaining it by hand.
 
 ```markdown
 # [Site Name]
@@ -43,169 +72,146 @@ Place a Markdown file at the site root (`/llms.txt`) that guides LLMs to the mos
 
 ## Content Types
 
-- [Page Type]: [What these pages contain and why they're useful]
+- [Page Type]: [What these pages contain]
 
 ## Data Sources
 
 - [Where the data comes from, how often updated]
-
-## Full Content
-
-- [/llms-full.txt](/llms-full.txt): Complete content index
 ```
 
-Also create `/llms-full.txt` — a comprehensive version with more detail that LLMs can fetch when they need deeper context.
+v2 spec options (optional): per-page Markdown versions (`page.html.md` or `page.md`), discovery through `<link rel="alternate" type="text/markdown">` or an HTTP `Link:` header. `/llms-full.txt` is a common convention, not required. Generate the file from the content model at build time so it never drifts.
 
-For pSEO specifically, the llms.txt should:
-- List all category hub pages
-- Describe what each page type contains
-- Note the data source and update frequency (freshness signal)
-- Link to the sitemap for full page discovery
+### 3. Controls: what actually limits Google AI use
 
-### 2. Configure AI Crawler Access in robots.txt
+| Control | Effect on AI Overviews / AI Mode | Notes |
+|---------|----------------------------------|-------|
+| `Google-Extended` (robots.txt) | **None** | Controls Gemini training and Gemini Apps/Vertex grounding only |
+| `nosnippet` (meta/header) | Yes, also removes the page from Search snippets | Blocks use as direct input to AIO and AI Mode |
+| `max-snippet:[n]` | Yes, limits how much can be used | Does not override structured data or license agreements |
+| `data-nosnippet` | Yes, for the marked sections | Text-level exclusion |
+| Search Console > Settings > Search generative AI | Yes, Exclude stops links and grounding in AIO, AI Mode and Discover gen-AI features | All sites since 2026-08-31. Options: Include (default), Exclude, Inherit from parent property. Not a ranking signal for other Search. Takes 1-2 days. Does not affect training |
+| `noindex` | Removes the page from Search entirely | Last resort |
 
-robots.txt creation is owned by **pseo-linking** (section 8). This skill defines which AI crawler rules to include. AI crawlers serve two purposes: **training** (building the model) and **retrieval** (fetching real-time answers). You typically want to allow retrieval crawlers and may want to block training crawlers.
+Measurement: AI Overviews and AI Mode count in Search Console Performance "Web" totals. The Generative AI performance report (all sites since 2026-08-31) shows **impressions only**, with dimensions for pages, countries, devices and dates. It has no query dimension, no clicks, and no API support found. Treat clicks and queries from AI features as not measurable.
 
-**AI retrieval crawlers — ALLOW (needed for citation):**
+### 4. Configure AI Crawler Access in robots.txt
+
+robots.txt creation is owned by **pseo-linking** (section 8). This skill defines which AI crawler rules to include. AI bots fall into three classes:
+
+- **Search/indexing bots** build the index for AI search results. Allow these to be eligible for citation
+- **User-fetch bots** fetch a page when a user asks. Some ignore robots.txt. Blocking can reduce visibility for user-directed requests
+- **Training bots** collect data for model training. Allowing or blocking is a business choice with no effect on Google Search
+
+**Sensible default: allow search and user-fetch bots, opt out of training only if you choose to.**
+
 ```
-User-agent: GPTBot
+# AI search and user-fetch bots: allow (needed to appear in these products)
+User-agent: OAI-SearchBot
 Allow: /
 
 User-agent: ChatGPT-User
 Allow: /
 
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
 User-agent: PerplexityBot
 Allow: /
 
-User-agent: ClaudeBot
+User-agent: Perplexity-User
 Allow: /
+
+# Training bots: optional opt-outs. Remove any group you are fine with.
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
 
 User-agent: Applebot-Extended
-Allow: /
-```
+Disallow: /
 
-**AI training crawlers — BLOCK if you don't want content used for training:**
-```
-User-agent: Google-Extended
+User-agent: meta-externalagent
 Disallow: /
 
 User-agent: CCBot
 Disallow: /
 ```
 
-See `references/ai-crawlers.md` for the full list of known AI crawlers and their purposes.
+Notes:
+- `Google-Extended` does **not** control AI Overviews or AI Mode. Use the Search Console setting or snippet controls (section 3)
+- Opting out of `GPTBot` does not remove you from ChatGPT search; `OAI-SearchBot` is independent. Likewise `ClaudeBot` vs `Claude-SearchBot`
+- OpenAI says opted-out sites can still appear in ChatGPT search "as navigational links"
+- Do not IP-block AI crawlers: Anthropic notes this prevents them from reading robots.txt
+- Content-Signal / Content-Usage lines are not parsed by Google (inferred; Google supports only user-agent, allow, disallow, sitemap)
+- Training opt-out does not affect Google Search ranking; do not disallow `Googlebot` or `Bingbot`
 
-**Critical**: If GPTBot is blocked, your content will NEVER appear in ChatGPT answers. If Bingbot is blocked, you lose ChatGPT citations entirely (ChatGPT uses Bing's index for web search).
+See `references/ai-crawlers.md` for the full table of tokens, purposes, and robots.txt behavior, plus Cloudflare controls and the IETF aipref status.
 
-### 3. Structure Content for LLM Extraction
+### 5. Content for Non-Google Agents (heuristics, not Google guidance)
 
-LLMs extract content in "chunks" — self-contained text fragments of ~100-300 tokens (75-225 words) that can stand alone as a complete answer. Optimize page structure for this:
+These are practical heuristics. Google says chunking and rewriting for AI do nothing for its features. They cost little and keep pages clear for people, but treat any numeric target as a rough guide.
 
-**The Answer Capsule Pattern:**
-```html
-<section>
-  <h2>[Question or topic as heading]</h2>
-  <!-- Answer capsule: 134-167 words, self-contained, directly answers the heading -->
-  <p>[Direct answer in the first 1-2 sentences. Then supporting detail.
-     The entire paragraph should make sense if extracted without any
-     surrounding context.]</p>
-</section>
-```
+- Lead sections with the direct answer, then supporting detail
+- Make each section understandable on its own (people land mid-page too)
+- Use headings that state what the section answers
+- Prefer plain, neutral, factual tone; avoid unsupported superlatives
+- Include specific numbers, dates, and named sources where you have them (the GEO paper, Aggarwal et al. 2024, arXiv:2311.09735, reports gains from statistics and citations in a controlled setting; real-world effect on production engines is unproven)
+- Do not pad or split content to hit word counts. There is no verified "ideal" section length. Earlier figures like "134-167 words" or "120-180 words gets 70% more citations" are unsupported and were removed
 
-**Rules for LLM-extractable content:**
-- Each section under an H2/H3 should be a complete, self-contained answer (134-167 words optimal)
-- Lead with the conclusion/answer, then provide reasoning
-- Never assume the reader has seen other sections — each chunk must stand alone
-- Use clear heading-to-content mapping (the heading is the question, the content is the answer)
-- Pages with 120-180 words between headings get 70% more ChatGPT citations
+### 6. Entities and Consistency
 
-**What NOT to do:**
-- Long unstructured paragraphs with no headings
-- Content that requires reading previous sections to understand
-- Vague headings that don't indicate what the section answers
-- Burying the answer after paragraphs of context
+Consistent naming helps both people and systems disambiguate. Not a Google AI requirement.
 
-### 4. Add Statistics and Original Data
+- Use the full canonical name of the primary entity, consistently across pages
+- State relationships in text ("made by [company]", "located in [city]")
+- Link to authoritative sources where it helps the reader
+- Keep structured data matching the visible text. Schema is for rich-result eligibility (Product, Review, Breadcrumb, JobPosting, Event, LocalBusiness, Organization), not for AI. FAQPage rich results ended 2026-05-07 and HowTo is gone; do not generate them for SERP or AI benefit
 
-Research from "GEO: Generative Engine Optimization" (Aggarwal et al., 2024, arXiv:2311.09735) shows statistics addition improves LLM visibility by ~41% and quotation addition by ~28%. These figures are from controlled experiments and may vary in practice.
+### 7. Rendering and Indexation Across Engines
 
-For pSEO pages, this means:
-- Surface numeric data from the content model as explicit statistics ("4.8 average rating from 500+ reviews")
-- Include specific numbers, percentages, dates, and measurements
-- Cite data sources explicitly ("According to [source], ...")
-- If the business has proprietary data, surface it — LLMs prefer content with information not found elsewhere
-- Add relevant expert quotations or attributions where possible
+| Engine | Source | Requirement |
+|--------|--------|-------------|
+| Google Search, AI Overviews, AI Mode | Google index | Indexed and snippet-eligible; no extra technical requirements |
+| ChatGPT search | OpenAI's own bot (`OAI-SearchBot`) | Allow it in robots.txt |
+| Claude | `Claude-SearchBot`, `Claude-User` | Allow them in robots.txt |
+| Perplexity | `PerplexityBot`, `Perplexity-User` | Allow PerplexityBot |
+| Bing, Copilot | Bing index | Verify in Bing Webmaster Tools |
 
-### 5. Implement Entity-Based Optimization
+- Verify Bing indexation and submit the sitemap to both Search Console and Bing Webmaster Tools. IndexNow works for Bing, Yandex and others; Google does not participate
+- Serve content in server-rendered HTML (SSR/SSG). Most non-Google bots are not documented as rendering JavaScript, so do not rely on client rendering
+- Return real 404 or 410 for no-data pages; do not stream a 200 shell with `noindex` for pages that should not exist
 
-LLMs understand entities (people, places, organizations, concepts, products) and their relationships. Traditional keyword optimization is less effective for AI citation.
+### 8. Freshness
 
-For pSEO pages:
-- Reference the primary entity by its full canonical name, not just abbreviations
-- Include entity relationships ("made by [company]", "located in [city]", "similar to [related entity]")
-- Use schema markup to explicitly define entities (Organization, Product, Place, Person)
-- Link to authoritative entity sources (Wikipedia, official sites) to help LLMs disambiguate
-- Use consistent entity naming across all pages (don't alternate between "NYC" and "New York City")
-
-### 6. Ensure Multi-Engine Indexation
-
-Different AI platforms source from different indexes:
-
-| AI Platform | Primary Source | Requirement |
-|-------------|---------------|-------------|
-| ChatGPT | Bing index | Must be indexed by Bing |
-| Google AI Overviews | Google index | Must be indexed by Google |
-| Perplexity | Own crawler + Bing | Must allow PerplexityBot |
-| Claude | Web search | Must be indexable |
-
-**Action items:**
-- Verify Bing indexation via Bing Webmaster Tools (not just Google Search Console)
-- Submit sitemap to both Google Search Console and Bing Webmaster Tools
-- Verify AI crawlers are not blocked in robots.txt
-- Use SSR or SSG — AI crawlers cannot execute JavaScript (client-rendered pages are invisible to them)
-
-### 7. Optimize Content Tone and Format
-
-LLMs preferentially cite content that is:
-- **Neutral and factual** — not promotional or salesy
-- **Comprehensive but concise** — covers the topic fully without padding
-- **Comparative** — comparison/list formats make up ~33% of all AI citations
-- **Authoritative** — backed by sources, data, and expertise
-
-For pSEO templates specifically:
-- Use neutral, informational tone even on commercial pages
-- Include comparison sections where relevant (vs. alternatives, compared to similar options)
-- Add "at a glance" summary sections that LLMs can extract as complete answers
-- Avoid superlatives without data backing ("best", "top", "#1" without evidence)
-
-### 8. Leverage Freshness Signals
-
-Content updated within 30 days gets significantly more AI citations than stale content.
-
-For pSEO at scale:
-- Use ISR with short revalidation intervals to keep pages fresh
-- Display a visible "Last updated: [date]" on every page
-- Include `dateModified` in schema markup with accurate dates
-- If data changes (prices, ratings, availability), reflect changes quickly
-- Consider automated data refresh pipelines that trigger page regeneration
+- Show a visible "Last updated" date only when content actually changed
+- Set `dateModified` and sitemap `lastmod` from real content-change timestamps, not build time
+- Use ISR with sensible revalidation for data that changes (prices, availability, ratings)
+- Freshness claims for AI citation come from vendor studies and vary by topic. Treat as a heuristic
 
 ## LLM Visibility Checklist
 
-- [ ] `/llms.txt` exists at site root with page type descriptions and category links
-- [ ] robots.txt allows GPTBot, ChatGPT-User, PerplexityBot, ClaudeBot, Bingbot
-- [ ] Site is indexed by both Google and Bing (verify in both webmaster tools)
-- [ ] All pages use SSR or SSG (no client-side-only rendering)
-- [ ] Each content section is a self-contained 134-167 word answer capsule
-- [ ] Headings clearly indicate what the section answers
-- [ ] Statistics and specific numbers are present on every page
-- [ ] Entity names are consistent and schema-defined across all pages
-- [ ] Content tone is neutral and factual, not promotional
-- [ ] Comparison/list sections are included where relevant
-- [ ] "Last updated" date is visible on every page and in schema
-- [ ] FAQ sections use Q&A format that matches natural language queries
+- [ ] Pages are indexed, snippet-eligible, and not blocked for Googlebot at robots.txt, CDN, or WAF level
+- [ ] No fan-out or query-variation page sets made to manipulate rankings or AI answers
+- [ ] Pages carry non-commodity value (original data, utility), not generic restatements
+- [ ] robots.txt allows search and user-fetch AI bots (OAI-SearchBot, ChatGPT-User, Claude-SearchBot, Claude-User, PerplexityBot, Perplexity-User) and Bingbot
+- [ ] Training opt-outs (GPTBot, ClaudeBot, Google-Extended, etc.) are a deliberate choice
+- [ ] AI Overview/AI Mode controls are deliberate: nosnippet/max-snippet/data-nosnippet or the Search Console generative AI setting, not `Google-Extended`
+- [ ] Site is indexed by both Google and Bing
+- [ ] All pages are server-rendered (SSR/SSG), HTML under 2MB
+- [ ] Entity names are consistent; structured data matches visible text
+- [ ] `lastmod` and `dateModified` reflect real changes
+- [ ] (Optional) `/llms.txt` exists, generated at build time, treated as non-Google agent support only
+- [ ] Generative AI performance report is reviewed for impressions, with no expectation of query or click data
 
 ## Relationship to Other Skills
 
 - **Builds on**: pseo-templates (page structure), pseo-schema (JSON-LD), pseo-metadata (crawlability), pseo-linking (robots.txt, sitemap)
 - **Extends**: pseo-performance (SSR/SSG requirement, freshness via ISR)
-- **Validated by**: pseo-quality-guard (content quality is the foundation — thin pages won't be cited by LLMs either)
+- **Validated by**: pseo-quality-guard (content quality is the foundation; scaled thin pages fail Google's policies and will not earn citations either)

@@ -31,10 +31,10 @@ Every pSEO content type must extend `PageIndex` with the heavy fields:
 
 ```typescript
 interface BaseSEOContent extends PageIndex {
-  // Content (heavy fields — only load per-page)
+  // Content (heavy fields, only load per-page)
   introText: string;               // 1-3 sentence intro paragraph
   bodyContent: string;             // main content (HTML or MDX)
-  faqs?: FAQ[];                    // structured FAQ pairs
+  faqs?: FAQ[];                    // optional visible Q&A for readers; do not generate FAQPage schema (FAQ rich results ended 2026-05-07)
 
   // Linking
   relatedSlugs?: string[];         // manually curated related pages
@@ -56,6 +56,11 @@ interface SEOImage {
   height: number;
 }
 ```
+
+## Size and Sufficiency Notes
+
+- Full-tier content is loaded per page, but only the fields the page renders should reach the HTML. Googlebot reads the first 2MB of uncompressed HTML, so do not serialize full records or whole datasets into props or inline JSON.
+- Add a sufficiency field to extended types (for example `dataScore: number`, or a list of populated unique fields). Pages below the page type's minimum are not generated.
 
 ## Example Extended Types
 
@@ -113,10 +118,10 @@ interface PSEODataLayer {
   // --- Index tier (lightweight, safe to hold all in memory) ---
 
   // Must handle internal pagination for data sources with 1000+ records.
-  // The consumer never paginates — this function returns the complete list.
+  // The consumer never paginates - this function returns the complete list.
   getAllSlugs(): Promise<{ slug: string; category: string }[]>;
 
-  // Returns lightweight PageIndex objects — no body content or media
+  // Returns lightweight PageIndex objects - no body content or media
   getPagesByCategory(
     category: string,
     opts?: { limit?: number; offset?: number }

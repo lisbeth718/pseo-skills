@@ -7,7 +7,7 @@
 | Unique word count per page | 300 | 500+ | < 150 |
 | Content similarity between any 2 pages | - | < 40% | > 80% |
 | Template variable ratio (variables / total words) | - | < 10% | > 50% |
-| FAQ questions per page (if FAQ type) | 3 | 5-8 | 0 |
+| FAQ questions per page (if FAQ type, content depth only; FAQ rich results are gone) | 3 | 5-8 | 0 |
 
 ## Metadata Thresholds
 
@@ -40,13 +40,15 @@
 
 | Metric | Good | Needs Improvement | Poor |
 |--------|------|-------------------|------|
-| LCP (mobile) | < 2.5s | 2.5-4.0s | > 4.0s |
-| CLS | < 0.1 | 0.1-0.25 | > 0.25 |
-| INP | < 200ms | 200-500ms | > 500ms |
+| LCP (mobile) | ≤ 2.5s | 2.5-4.0s | > 4.0s |
+| CLS | ≤ 0.1 | 0.1-0.25 | > 0.25 |
+| INP | ≤ 200ms | 200-500ms | > 500ms |
 | JS bundle per page | < 100KB | 100-200KB | > 200KB |
 | Build time per 100 pages | < 30s | 30-120s | > 120s |
 
-## Scaled Content Abuse Thresholds (Google 2025)
+## Scaled Content Abuse Thresholds (internal heuristics)
+
+These numbers are this toolkit's heuristics. Google publishes no numeric thresholds for scaled content abuse, doorway pages, or publication velocity. The 300-word and 80% similarity figures elsewhere in this file are likewise heuristics. Policy basis: Google spam policies (last updated 2026-08-28) and Search Quality Rater Guidelines 4.6.5 and 4.6.6 (version 2025-09-11).
 
 | Metric | Safe | Warning | Critical |
 |--------|------|---------|----------|
@@ -55,7 +57,7 @@
 | Pages with filler intros | 0 | 1-10% | > 10% |
 | Value visible in first 200 words | 100% | 90-99% | < 90% |
 | Pages with zero E-E-A-T signals | 0% | 1-20% | > 20% |
-| Pages published in single day | < 100 | 100-500 | > 500 |
+| Pages published in single day (precaution only, no known Google rule) | < 100 | 100-500 | > 500 |
 
 ## Content Pruning Decision Thresholds
 
@@ -113,5 +115,5 @@
 
 - **Info**: Best practice recommendations.
   - Titles could be more descriptive
-  - FAQ sections could have more questions
+  - FAQ sections could have more questions (content value only, not for rich results)
   - Cross-category linking opportunities

@@ -7,151 +7,154 @@ allowed-tools: Read, Bash, Glob, Grep, Write, Agent, WebSearch
 
 # Google Search Console
 
-Pull, analyze, and act on Google Search Console data for any site.
+Pull, analyze, and act on Google Search Console data for any site. In the pSEO pipeline this is the **post-launch monitoring step**: run it after `pseo-quality-guard` once pages are live and the sitemap is submitted.
+
+Facts below are from `docs/research-2026-10.md` (2026-10-12).
 
 ## Prerequisites
 
-GSC access uses OAuth2 tokens stored at:
+Scripts live in this skill's `scripts/` folder (`<skill-dir>/scripts/`, for example `.claude/skills/gsc/scripts/`). Install once:
+
+```bash
+cd <skill-dir>/scripts && npm install
+```
+
+Credentials (override paths with env vars `GSC_CLIENT` and `GSC_TOKENS`):
 - **OAuth client:** `~/.config/gsc-oauth-client.json`
 - **OAuth tokens:** `~/.config/gsc-oauth-tokens.json`
-- **Scripts directory:** `~/Development/scripts/` (contains `googleapis` npm package)
 
-If tokens don't exist, guide the user through setup (see Setup section below).
+If tokens don't exist, follow the Setup section. Never commit these files.
 
 ## Determine the site property
 
-The GSC site property is usually one of:
 - `sc-domain:example.com` (domain property, covers all subdomains)
-- `https://example.com` (URL prefix property)
+- `https://example.com/` (URL prefix property)
 
-Try domain property first (`sc-domain:` prefix). If it fails with permission error, try the URL prefix version.
+Try the domain property first. On a permission error, try the URL prefix version.
 
 ## Actions
 
 ### pull (default)
 
-Pull search analytics data. Default 28 days, configurable with `--days`.
+Default 28 days, configurable with `--days`.
 
 ```bash
-cd ~/Development/scripts && npx tsx pull-gsc.ts --site sc-domain:DOMAIN --days DAYS
+npx tsx <skill-dir>/scripts/pull.ts --site sc-domain:example.com --days 28
 ```
 
-This outputs to `./data/gsc-queries.json` in the **current working directory** (the project, not the scripts dir). The script fetches:
-- Top 500 queries with clicks, impressions, CTR, position
-- Top 200 pages with the same metrics
-- Per-page query breakdown for top 30 pages
+Run from the project root. Output goes to `./data/gsc-queries.json` in the **current working directory**. The script fetches (paginating with `startRow`):
+- Top 500 queries with clicks, impressions, CTR, position (`--queries N`)
+- Top 200 pages with the same metrics (`--pages N`)
+- Per-page query breakdown for the top 30 pages (`--top-pages N`)
+
+Search Analytics API notes:
+- Data lags by about 2 days; the script ends the range 2 days back.
+- `rowLimit` max is 25,000 per request; page with `startRow`.
+- Quota: 1,200 queries/min per site and per user, plus load quotas. Page+query queries are the most expensive, so keep the per-page breakdown to the top pages.
+- Hourly data exists (`HOUR` dimension, `dataState: HOURLY_ALL`, up to 10 days back; added 2025-04-09). The pull script does not use it.
+- AI Overviews and AI Mode clicks and impressions count in the Web totals. There is no way to split them out through the API.
+- The **Generative AI performance report is UI only**: Search Console > Performance > Generative AI. It reports impressions only (no clicks, no query dimension), has a 1,000-row UI limit, and no API access was found. Do not promise gen-AI query data.
 
 After pulling, read `data/gsc-queries.json` and analyze:
 
-1. **Quick wins** — queries ranking position 5-20 with decent impressions but low CTR. These pages need better titles/descriptions.
-2. **Zero-click high-impression** — queries with 0 clicks but 20+ impressions. Content exists but isn't compelling enough to click.
-3. **Top pages** — which pages drive the most traffic? Are the right pages ranking?
-4. **Missing pages** — compare GSC pages against the sitemap. Which sitemap URLs have zero impressions?
+1. **Quick wins** - queries ranking position 5-20 with decent impressions but low CTR. These pages need better titles/descriptions.
+2. **Zero-click high-impression** - queries with 0 clicks but 20+ impressions. Content exists but isn't compelling enough to click.
+3. **Top pages** - which pages drive the most traffic? Are the right pages ranking?
+4. **Missing pages** - compare GSC pages against the sitemap. Which sitemap URLs have zero impressions?
+5. **Template health** - group pages by template/URL pattern. A whole pattern with impressions near zero points to a thin or duplicate template, not a per-page problem.
 
 ### inspect
 
-Deep inspection of specific URLs. Write and run a script using the URL Inspection API:
+URL Inspection for specific URLs.
 
-```typescript
-import { google } from 'googleapis';
-// ... auth setup ...
-const sc = google.searchconsole({ version: 'v1', auth: oauth2Client });
-
-const result = await sc.urlInspection.index.inspect({
-  requestBody: { inspectionUrl: URL, siteUrl: SITE }
-});
-
-// Key fields:
-// result.data.inspectionResult.indexStatusResult.verdict — PASS, NEUTRAL, FAIL
-// result.data.inspectionResult.indexStatusResult.coverageState — "Submitted and indexed", "URL is unknown to Google", etc.
-// result.data.inspectionResult.indexStatusResult.lastCrawlTime
-// result.data.inspectionResult.indexStatusResult.pageFetchState
+```bash
+npx tsx <skill-dir>/scripts/inspect.ts --site sc-domain:example.com --urls https://example.com/a,https://example.com/b
+npx tsx <skill-dir>/scripts/inspect.ts --site sc-domain:example.com --file urls.txt
 ```
 
-Common coverage states and what they mean:
-- **"Submitted and indexed"** — Good, page is in Google's index
-- **"URL is unknown to Google"** — Google has never seen this URL. Check sitemap submission and internal linking.
-- **"Crawled - currently not indexed"** — Google found it but chose not to index. Usually thin content or duplicate.
-- **"Duplicate without user-selected canonical"** — Missing canonical tag, Google picked its own canonical.
-- **"Duplicate, submitted URL not selected as canonical"** — Your canonical points elsewhere or Google disagrees with it.
+Writes `data/gsc-inspect.json`. Quota: **2,000 inspections per day and 600 per minute per site property** (10M/day and 15k/min per project). The script waits 700 ms between calls (`--delay`) and stops on a 429. Sample representative URLs per template instead of inspecting every page.
+
+Key fields on `inspectionResult.indexStatusResult`: `verdict` (PASS, NEUTRAL, FAIL), `coverageState`, `lastCrawlTime`, `pageFetchState`, `googleCanonical`, `userCanonical`.
+
+Common coverage states (as shown in Search Console):
+- **"Submitted and indexed"** - page is in Google's index.
+- **"URL is unknown to Google"** - never seen. Check sitemap submission and internal linking.
+- **"Discovered - currently not indexed"** - Google knows the URL but has not crawled it yet. With many of these, check crawl budget and internal linking.
+- **"Crawled - currently not indexed"** - crawled but not indexed. Usually thin or duplicate content; treat a whole template showing this as a quality signal.
+- **"Duplicate without user-selected canonical"** - no canonical tag, Google picked its own.
+- **"Duplicate, Google chose different canonical than user"** - Google disagrees with your canonical. Near-duplicate template pages often land here.
+- **"Duplicate, submitted URL not selected as canonical"** - sitemap URL is treated as a duplicate of another.
+- **"Soft 404"** - page returns 200 but looks empty. Return a real 404/410 for no-data pages.
+- **"Excluded by 'noindex' tag"** - noindex present in the served HTML.
+
+After fixing duplicate issues, Google may keep pages in a duplicate cluster for up to two weeks. Request Indexing is quota-limited; reserve it for the most important URLs.
+
+### sitemaps
+
+```bash
+npx tsx <skill-dir>/scripts/sitemaps.ts list --site sc-domain:example.com
+npx tsx <skill-dir>/scripts/sitemaps.ts submit --site sc-domain:example.com --url https://example.com/sitemap.xml
+npx tsx <skill-dir>/scripts/sitemaps.ts delete --site sc-domain:example.com --url https://example.com/old-sitemap.xml
+```
+
+`submit` and `delete` need the write scope (`auth.ts --write`). Sitemap limits: 50,000 URLs or 50MB uncompressed per file; up to 500 sitemap index files per site in Search Console. Google ignores `<priority>` and `<changefreq>`; `<lastmod>` counts only when it is consistently accurate.
 
 ### audit
 
-Full GSC audit. Combines pull + inspect on key pages. Steps:
+Full GSC audit. Combines pull + inspect on key pages:
 
 1. Pull 90-day data
-2. Check which sitemaps are registered (`sc.sitemaps.list`)
-3. Inspect 10-15 representative URLs (homepage, key landing pages, pSEO samples)
-4. Report: indexed vs not indexed, crawl issues, sitemap problems, quick wins
+2. `sitemaps.ts list` to check registered sitemaps and errors
+3. Inspect 10-15 representative URLs (homepage, key landing pages, a sample per pSEO template)
+4. Report: indexed vs not indexed per template, crawl issues, sitemap problems, quick wins
+
+Save audit output to `data/gsc-deep.json`.
+
+### Post-launch monitoring (pSEO)
+
+Run after launch and on a recurring schedule (weekly during rollout):
+
+- Pull 28 days; compare impressions and indexed share per template against the previous pull.
+- Inspect a sample per template. A rising share of "Crawled - currently not indexed" or "Duplicate, Google chose different canonical than user" means the template adds too little unique value: go back to `pseo-data` (sufficiency gating) and `pseo-quality-guard`.
+- Pause or slow rollout if indexed share drops. Google ships frequent spam and core updates (four spam updates in 2026 so far); judge trends over weeks, not days.
+- Do not use the Google Indexing API for pSEO pages: it is only for JobPosting and livestream (BroadcastEvent) content. Rely on sitemaps and internal links.
 
 ### setup
 
-If OAuth tokens don't exist, guide setup:
+If OAuth tokens don't exist:
 
-1. **Google Cloud Console** — User needs an OAuth 2.0 Client ID (Desktop app type)
-   - Go to console.cloud.google.com > APIs & Services > Credentials
-   - Enable the "Google Search Console API"
-   - Create OAuth 2.0 Client ID, type: Desktop
+1. **Google Cloud Console** - create an OAuth 2.0 Client ID of type Desktop:
+   - console.cloud.google.com > APIs & Services > Library: enable the "Google Search Console API"
+   - APIs & Services > Credentials > Create OAuth client ID, type Desktop app
    - Save the JSON to `~/.config/gsc-oauth-client.json`
 
-2. **Run auth script** — This opens a browser for OAuth consent:
+2. **Run the auth script** (opens a browser for consent, cross-platform):
    ```bash
-   cd ~/Development/scripts && npx tsx gsc-auth.ts
+   npx tsx <skill-dir>/scripts/auth.ts
    ```
-   The script listens on `localhost:3456` for the OAuth callback and saves tokens to `~/.config/gsc-oauth-tokens.json`.
+   It listens on `localhost:3456` for the callback and saves tokens to `~/.config/gsc-oauth-tokens.json` (mode 600).
 
-3. **Scope** — The auth script requests `https://www.googleapis.com/auth/webmasters` (read+write). This allows:
-   - Reading search analytics
-   - URL inspection
-   - Sitemap submission/deletion
+3. **Scope** - default is `https://www.googleapis.com/auth/webmasters.readonly`, enough for search analytics and URL inspection. Only for sitemap submit/delete, re-run with the full scope:
+   ```bash
+   npx tsx <skill-dir>/scripts/auth.ts --write
+   ```
+   which requests `https://www.googleapis.com/auth/webmasters`.
 
-## Auth helper code
+## Search generative AI setting
 
-For custom scripts, use this auth pattern:
+Sites can opt out of AI Overviews, AI Mode and Discover gen-AI features without leaving classic Search: **Search Console > Settings > Search generative AI** (options: Include, Exclude, Inherit from parent property; rolled out to all sites by 2026-08-31; takes effect in 1-2 days). It is separate from `Google-Extended` (Gemini training/grounding) and from `nosnippet` / `max-snippet`. Only change it when the user asks.
 
-```typescript
-import { google } from 'googleapis';
-import { readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+## Custom scripts
 
-const CLIENT_PATH = join(homedir(), '.config', 'gsc-oauth-client.json');
-const TOKENS_PATH = join(homedir(), '.config', 'gsc-oauth-tokens.json');
-
-function getAuth() {
-  const clientFile = JSON.parse(readFileSync(CLIENT_PATH, 'utf-8'));
-  const tokens = JSON.parse(readFileSync(TOKENS_PATH, 'utf-8'));
-  const { client_id, client_secret } = clientFile.installed || clientFile.web;
-  const oauth2Client = new google.auth.OAuth2(client_id, client_secret);
-  oauth2Client.setCredentials(tokens);
-  // Auto-refresh tokens
-  oauth2Client.on('tokens', (t) => {
-    writeFileSync(TOKENS_PATH, JSON.stringify({ ...tokens, ...t }, null, 2));
-  });
-  return oauth2Client;
-}
-
-const auth = getAuth();
-const sc = google.searchconsole({ version: 'v1', auth });
-```
-
-**Important:** The `googleapis` package is installed in `~/Development/scripts/node_modules/`. Run custom scripts from that directory or install it in the project.
-
-## Sitemap management
+Import the shared helper instead of re-implementing auth:
 
 ```typescript
-// List sitemaps
-const sitemaps = await sc.sitemaps.list({ siteUrl: site });
-
-// Submit new sitemap
-await sc.sitemaps.submit({ siteUrl: site, feedpath: 'https://example.com/sitemap.xml' });
-
-// Delete old sitemap
-await sc.sitemaps.delete({ siteUrl: site, feedpath: 'https://example.com/old-sitemap.xml' });
+import { getSearchConsole } from './lib/auth.js';
+const sc = getSearchConsole(); // tokens auto-refresh and persist
 ```
 
 ## Output
 
-Always save pulled data to `data/gsc-queries.json` (or `data/gsc-deep.json` for audits) in the project directory. Add `data/` to `.gitignore` if not already there.
+Save pulled data to `data/gsc-queries.json` (or `data/gsc-deep.json` for audits) in the project directory. Add `data/` to `.gitignore` if not already there.
 
-After analysis, present findings as actionable items sorted by impact. Focus on what can be fixed in code (titles, descriptions, canonicals, structured data, internal linking) rather than off-page factors.
+After analysis, present findings as actionable items sorted by impact. Focus on what can be fixed in code (titles, descriptions, canonicals, structured data, internal linking, data sufficiency) rather than off-page factors.

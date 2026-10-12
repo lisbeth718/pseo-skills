@@ -17,6 +17,17 @@ Design and implement the structured data layer that feeds all programmatic SEO p
 4. **Type safety**: All data models are fully typed (TypeScript interfaces/types)
 5. **Separation of concerns**: Data fetching is decoupled from page rendering
 
+## Data Sufficiency First
+
+Decide which pages deserve to exist before designing anything else. Google's spam policies (scaled content abuse, doorway abuse) target many near-identical pages built mainly to rank. For every planned page type:
+
+- Define the minimum unique data fields a page needs to be useful on its own (real facts, numbers, attributes that differ per page, not just a swapped keyword).
+- Score each record against that minimum. Records below the threshold get no page: do not generate them, or return a real 404. Do not ship thin pages as `noindex` and plan to flip them later.
+- Do not create a separate page for every query variation or "fan-out" query. One page per distinct entity or intent.
+- Keep a clear, browseable hierarchy (category > page) so pages are not just "closer to search results" than to a site structure.
+
+See **pseo-scale** for sufficiency scoring code.
+
 ## Implementation Steps
 
 ### 1. Define Content Models
@@ -39,7 +50,7 @@ interface PageIndex {
 interface BaseSEOContent extends PageIndex {
   introText: string;
   bodyContent: string;
-  faqs?: FAQ[];
+  faqs?: FAQ[];               // optional visible Q&A; FAQ rich results no longer exist in Google
   relatedSlugs?: string[];
   featuredImage?: SEOImage;
 }
@@ -59,10 +70,10 @@ Create a centralized data module (e.g., `lib/data.ts` or `src/data/index.ts`) th
 - `getPageCount()` - Returns total page count (useful for sitemap splitting and build diagnostics)
 
 All functions must be:
-- Cached or memoized during build to avoid redundant reads
+- Cached or memoized during build to avoid redundant reads (see Next.js 16.4 notes below)
 - Typed with explicit return types
 - Guarded against missing or malformed data
-- Internally paginated when the data source imposes limits (e.g., CMS APIs with 100-item pages). The consumer should never need to handle pagination — the data layer abstracts it.
+- Internally paginated when the data source imposes limits (e.g., CMS APIs with 100-item pages). The consumer should never need to handle pagination - the data layer abstracts it.
 
 ### 3. Implement Slug Generation
 
@@ -96,6 +107,29 @@ Based on the data source (`$ARGUMENTS` or detected):
 
 **API**: Create a typed API client, implement rate limiting and retry logic, add response caching.
 
+## Next.js 16.4 Data Fetching
+
+Applies when the project uses Next.js 16.x (current: 16.4.0, 2026-10-06). Cache Components is recommended for all apps in 16.4 and becomes the default in Next.js 17.
+
+- Enable with `cacheComponents: true`. Caching is opt-in: mark data functions with the `"use cache"` directive and set lifetime with `cacheLife()` / tag with `cacheTag()`. Dynamic is the default, so uncached reads in a page make it dynamic.
+- Put the data layer functions (`getPageData`, `getPagesByCategory`, ...) behind `"use cache"` so page templates stay prerenderable.
+- `params` and `searchParams` are async: `const { slug } = await params`.
+- `generateStaticParams` must return at least one param when Cache Components is on (an empty array is a build error). Return a small seed set (top pages by sufficiency score) and let the rest render on demand and cache; use `notFound()` for unknown slugs.
+- `export const ensureStatic = 'navigation' | 'prefetch' | 'shell'` fails the build if dynamic content leaks into a route. Use it on static pSEO templates.
+- Do not prerender the full set at build. On Vercel a build is capped at 45 minutes per deployment, so seed the top pages and use ISR/on-demand rendering for the long tail.
+- Check data existence **before** any Suspense boundary or `loading.tsx`. Once streaming starts the response is already `200`, so a later `notFound()` becomes a 200 page with `noindex` that Google may label a soft 404. For "no data for this combo" pages, resolve the lookup first (or return 404 in `proxy.ts`).
+- Revalidation: `revalidateTag(tag, profile)` now requires a cache-life profile; use `updateTag()` in Server Actions for read-your-writes.
+- Without Cache Components, use `generateStaticParams` returning `[]` or `dynamic = 'force-static'` for runtime ISR, and `dynamicParams = false` to 404 unlisted params.
+
+## HTML Size Budget
+
+Googlebot for Search fetches only the first **2MB** of uncompressed HTML per page (each CSS/JS resource is limited separately). Content, canonical and metadata past that point can be lost.
+
+- Never inline the whole dataset into the page as JSON (for example a full table of 5,000 rows in a `<script>` tag or serialized props). Pass only what the visible page needs.
+- Watch the RSC/`__next_f` payload and `__NEXT_DATA__` size: they count toward the 2MB. Keep per-page props to the fields rendered.
+- Paginate or lazy-load long tables, with each page at its own crawlable URL and canonical (no `#` page numbers).
+- Measure uncompressed HTML size of sample pages in the build and fail above a budget (for example 1MB).
+
 ## Scale Limits
 
 The in-memory and file-based patterns in this skill work up to ~10K pages. Beyond that:
@@ -113,12 +147,12 @@ At 1000+ pages, how data is loaded matters more than what is loaded. A full cont
 
 Split the data layer into lightweight index data and full page data. The `PageIndex` and `BaseSEOContent` interfaces from section 1 define the two tiers:
 
-- `getAllSlugs()`, `getRelatedPages()`, `getPagesByCategory()` — return `PageIndex[]` (lightweight, ~1KB per page)
-- `getPageData()` — returns `BaseSEOContent` (or an extended type) for a single page (heavy, ~50-500KB per page, only one at a time)
+- `getAllSlugs()`, `getRelatedPages()`, `getPagesByCategory()` - return `PageIndex[]` (lightweight, ~1KB per page)
+- `getPageData()` - returns `BaseSEOContent` (or an extended type) for a single page (heavy, ~50-500KB per page, only one at a time)
 
 **Never do this:**
 ```typescript
-// Loads ALL full content into memory — will OOM at scale
+// Loads ALL full content into memory - will OOM at scale
 const allPages = await Promise.all(slugs.map(s => getPageData(s)));
 ```
 
@@ -134,7 +168,7 @@ for (const slug of slugs) {
 
 **CMS/API pagination:**
 - Fetch in batches of 100-250 records
-- Yield or push to an array incrementally — don't hold all API responses in memory simultaneously
+- Yield or push to an array incrementally - don't hold all API responses in memory simultaneously
 - If using GraphQL, only request index fields in list queries, full fields in single-item queries
 
 ## File Organization
@@ -162,6 +196,8 @@ Before considering this complete:
 - [ ] Two-tier data model implemented (index data vs. full page data)
 - [ ] No function loads all full page content into memory simultaneously
 - [ ] CMS/API fetching uses batched pagination internally
+- [ ] Data sufficiency threshold defined per page type; records below it produce no page
+- [ ] No dataset-sized inline JSON; sample page HTML stays well under 2MB uncompressed
 
 ## Relationship to Other Skills
 
@@ -169,5 +205,6 @@ This skill provides the data foundation for:
 - **pseo-templates**: Consumes `getPageData()` and `getAllSlugs()`
 - **pseo-metadata**: Reads title, description, canonical from content models
 - **pseo-schema**: Uses structured fields for JSON-LD generation
+- **gsc**: Post-launch monitoring; per-template indexing results feed back into sufficiency thresholds
 - **pseo-linking**: Uses `getRelatedPages()` and category data
 - **pseo-quality-guard**: Validates against the content models

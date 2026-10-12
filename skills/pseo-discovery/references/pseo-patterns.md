@@ -8,7 +8,7 @@
 | Category pages | `/category/[slug]` | category name, description, child products | Medium (10-500) |
 | Brand pages | `/brands/[slug]` | brand name, description, products by brand | Medium (10-500) |
 | Comparison pages | `/compare/[product-a]-vs-[product-b]` | 2 products with comparable attributes | High (n² combinations) |
-| Use-case pages | `/best-[category]-for-[use-case]` | category, use cases, filtered product lists | Medium (categories × use cases) |
+| Use-case pages | `/best-[category]-for-[use-case]` | category, use cases, filtered product lists (high risk without first-hand data or testing) | Medium (categories × use cases) |
 | Deal/price pages | `/deals/[category]` | products with price drops, categories | Low-Medium |
 
 **Data signals to look for**: product catalog, category taxonomy, review data, pricing data, specification attributes.
@@ -31,10 +31,10 @@
 | Page Type | URL Pattern | Data Required | Volume Potential |
 |-----------|------------|---------------|-----------------|
 | Listing pages | `/[category]/[listing-slug]` | listing details, images, reviews, contact | High (100-100K) |
-| Location pages | `/[service]-in-[city]` | service types, city data, local listings | Very High (services × cities) |
+| Location pages | `/[service]-in-[city]` | service types, city data, local listings (doorway risk if only the city name changes) | Very High (services × cities) |
 | Category + location | `/[category]/[city]` | category, location, filtered listings | Very High |
 | Profile pages | `/providers/[name]` | provider details, services, reviews, portfolio | High |
-| Top lists | `/best-[category]-in-[city]` | category, location, ranked listings | Very High |
+| Top lists | `/best-[category]-in-[city]` | category, location, ranked listings (needs real ranking data, not invented) | Very High |
 
 **Data signals to look for**: listing database, service categories, location/geolocation data, review/rating data, provider profiles.
 
@@ -47,7 +47,7 @@
 | Tag/taxonomy pages | `/tags/[tag]` | tag name, tagged content list | Medium (50-500) |
 | Author pages | `/authors/[author]` | author name, bio, articles by author | Low-Medium (10-200) |
 | Stats/data pages | `/statistics/[topic]` | topic, data points, sources, charts | Medium |
-| How-to/guide pages | `/how-to/[task]` | task name, steps, tools needed, FAQs | Medium (50-500) |
+| How-to/guide pages | `/how-to/[task]` | task name, steps, tools needed (HowTo rich results no longer exist) | Medium (50-500) |
 
 **Data signals to look for**: article/content database, tag taxonomy, author profiles, structured data/statistics, glossary terms.
 
@@ -55,7 +55,7 @@
 
 | Page Type | URL Pattern | Data Required | Volume Potential |
 |-----------|------------|---------------|-----------------|
-| Service + city | `/[service]/[city]` | service description, city info, local details | High (services × cities) |
+| Service + city | `/[service]/[city]` | service description, city info, local details (doorway risk without unique local data) | High (services × cities) |
 | Neighborhood pages | `/[service]/[city]/[neighborhood]` | service, neighborhood details, local data | Very High |
 | Service pages | `/services/[service]` | service name, description, pricing, FAQs | Low (10-50) |
 | Industry pages | `/industries/[industry]` | industry name, relevant services, case studies | Low-Medium (10-50) |
@@ -73,9 +73,15 @@ pSEO scales through **combinations of dimensions**. The most powerful pattern is
 | 30 tools | × 30 competitors | = 900 comparison pages |
 | 500 listings | × 10 categories | = 5,000 filtered views |
 
-**Warning**: Combinations scale fast. Validate that every combination produces a genuinely useful page. `[obscure-service] in [tiny-town]` with zero local data is a thin page.
+**Warning**: Combinations scale fast. Validate that every combination produces a genuinely useful page. `[obscure-service] in [tiny-town]` with zero local data is a thin page, and Google's doorway policy names pages "targeted at specific regions or cities that funnel users to one page" and "substantially similar pages that are closer to search results than a clearly defined, browseable hierarchy". Only generate a combination if it has data of its own; return 404 (or do not generate) for empty combinations.
 
-## Red Flags — When NOT to Do pSEO
+## High-Risk vs Viable Patterns (Google spam policies, state as of 2026-10)
+
+**High risk** (doorway or scaled content abuse): city x service pages with only the place swapped; separate pages for query variations or fan-out queries of one intent (named in Google's AI optimization guide, 2026-05-15); `best [X] for [Y]` pages with no real data or first-hand testing; auto-translated copies; pages built on scraped content; blocks of text listing cities and regions.
+
+**Viable**: pages built on real proprietary or first-hand data (listings, prices, stats, measurements), tools and calculators, comparisons backed by first-hand data, location pages with substantive local data inside a browseable hierarchy.
+
+## Red Flags - When NOT to Do pSEO
 
 - **Fewer than 50 unique records**: Not enough scale to justify the infrastructure
 - **No structured attributes**: Just a name and one-sentence description per record = thin pages

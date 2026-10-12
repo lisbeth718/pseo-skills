@@ -30,7 +30,7 @@ A page is thin if it:
 **How to check:**
 - Extract text content from each rendered page (strip HTML tags, nav, footer)
 - Count unique words per page
-- Compare content across pages — compute similarity ratios
+- Compare content across pages - compute similarity ratios
 - Flag pages with < 300 unique words or > 80% similarity to another page
 
 ### 2. Duplicate Content Detection
@@ -55,7 +55,7 @@ At scale (200+ pages), pairwise is O(n²) and impractical. Use one of:
 - **MinHash / LSH**: Hash n-gram sets into fixed-size signatures, use locality-sensitive hashing to find candidate pairs. Reduces comparisons from O(n²) to near-linear.
 - **SimHash**: Compute a fingerprint per page, compare fingerprints (Hamming distance). Pages with similar fingerprints are candidates.
 - **Sampling**: Compare each page against a random sample of 50 others + all pages in the same category. Not exhaustive but catches the common cases.
-- **Template fingerprinting**: Hash the non-variable parts of each page. If two pages share the same template fingerprint, flag them — they differ only in variable slots.
+- **Template fingerprinting**: Hash the non-variable parts of each page. If two pages share the same template fingerprint, flag them - they differ only in variable slots.
 
 ### 3. Keyword Cannibalization Detection
 
@@ -70,7 +70,7 @@ Cannibalization occurs when multiple pages target the same search query.
 - Merge thin pages targeting the same keyword into one comprehensive page
 - Differentiate intent (informational vs. transactional vs. navigational)
 - Use canonical tags to point duplicates to the primary page
-- Adjust titles and H1s to target distinct long-tail variations
+- Differentiate by real intent or entity; otherwise merge the pages
 
 ### 4. Metadata Quality Validation
 
@@ -90,7 +90,9 @@ Check every page's metadata for:
 
 - Every page has at least BreadcrumbList schema
 - Content pages have Article or appropriate type schema
-- FAQ pages have FAQPage schema with valid Q&A pairs
+- Schema matches visible text and is fact-checked (Google asks for review of titles, descriptions, structured data and alt text on AI-generated pages)
+- Do not generate FAQPage or HowTo markup for Google: FAQ rich results stopped showing 2026-05-07 and HowTo went in 2023. Keep it only if another consumer needs it
+- Use types that still have Search features (Product, Review snippet, Breadcrumb, JobPosting, Event, LocalBusiness, Organization). Structured data is not required for AI features
 - No schema has empty or placeholder values
 - All URLs in schema are absolute
 
@@ -101,24 +103,46 @@ Check every page's metadata for:
 - Every page links back to its category hub
 - Breadcrumbs are present and correct
 
-### 7. Scaled Content Abuse Detection (Google 2025)
+### 7. Scaled Content Abuse and Doorway Detection (Google policy, state as of 2026-10)
 
-Google's 2025 updates (March, June, August, December) increasingly target programmatic pages that exist primarily to manipulate rankings. The method (AI, templates, human) is irrelevant — only intent and value matter.
+Google's spam policies target pages generated "for the primary purpose of manipulating search rankings and not helping users ... no matter how it's created". The method (AI, templates, human) is irrelevant; only intent and value matter. Google publishes no per-update targets for its spam updates, so treat the thresholds below as internal heuristics, not Google facts.
 
-**Check for these specific patterns that trigger Google's SpamBrain system:**
+**Recent Google updates (Search Status Dashboard, Jan 2025 - Oct 2026):**
+- Core: March 2025, June 2025, December 2025, March 2026, May 2026 (plus unannounced "smaller core updates" that Google documents as continual since 2025-12-09, so recovery does not wait for a named update)
+- Spam: August 2025, March 2026, June 2026, August 2026, September 2026 (2026-09-24 to 2026-10-08)
+- Discover only: February 2026 Discover core update
 
-- **Template repetitiveness ratio**: Extract the boilerplate (shared HTML structure and text) from all pages of a type. If boilerplate is 60-80%, flag as warning; if > 80%, flag as critical risk for scaled content abuse.
-- **Variable-swap-only differentiation**: If the only differences between pages are proper nouns (city names, product names, keywords), flag as extremely high risk. Google specifically called out "location pages that use the same template in dozens of cities."
-- **Filler content patterns**: Detect generic introductory paragraphs ("In today's world...", "When it comes to...", "If you're looking for...") that add no information. These patterns are specifically targeted by the December 2025 "Needs Met" enforcement.
-- **Value-first test**: Check if the primary content/answer appears within the first 200 words. Pages that bury value below filler are devalued.
-- **E-E-A-T signal presence**: Check for author attribution, data sources, last-updated dates. Absence of all trust signals on pSEO pages is a risk factor.
-- **Publication velocity**: If 500+ pages were published within a single day or week, flag for review. Gradual rollout is safer.
+**Current policy wording that matters for pSEO:**
+- **Scaled content abuse** examples: gen-AI pages "without adding value", scraped or synonymized feeds, stitched content, multiple sites hiding the scale, keyword pages that "make little or no sense to a reader". Auto-translation without added value counts (June 2025 doc change).
+- **Fan-out and query-variation pages**: separate pages for every query variation "or fan-out queries" to manipulate rankings or AI responses violate the scaled content abuse policy (AI optimization guide, 2026-05-15). Spam policies also cover "attempting to manipulate generative AI responses" (2026-05-15).
+- **Doorway abuse**: "substantially similar pages that are closer to search results than a clearly defined, browseable hierarchy", and pages "targeted at specific regions or cities that funnel users to one page".
+- **Keyword stuffing**: includes "blocks of text that list cities and regions" a page tries to rank for.
+- **Thin affiliation / cookie-cutter templates** replicated within a site or across domains or languages.
+- **Expired domain abuse**: repurposing an expired domain mainly to host low-value content that exploits its old ranking signals.
+- **Site reputation policy** (updated 2026-08-28): third-party content is a violation only if published mainly because of the host's established ranking signals. Outside the EEA the manual action applies to the affected section; in the EEA there is no manual-action impact and the section may rank separately. Default presumption: new pages are judged against the overall quality of the domain, so a large batch of thin pages is a site-level risk.
+- **Back-button hijacking** (enforced from 2026-06-15): includes code from ad platforms and libraries. Check third-party scripts.
+- **User spam reports** can directly trigger manual actions (from 2026-04-14).
+- **Quality Rater Guidelines**: current version is 2025-09-11 (no verified 2026 update). Section 4.6.5 (scaled content abuse) and 4.6.6 (little-to-no effort, originality or added value) rate such pages Lowest. Section 5.2.2 treats prominent filler ahead of the main content as a Low signal.
 
-**Severity:**
-- Template repetitiveness > 80%: **Critical** — will likely trigger scaled content abuse penalty
-- Template repetitiveness 60-80%: **Warning** — at risk, needs content enrichment
+**Check for these patterns (internal heuristics):**
+
+- **Template repetitiveness ratio**: Extract the boilerplate (shared HTML structure and text) from all pages of a type. If boilerplate is 60-80%, flag as warning; if > 80%, flag as critical risk.
+- **Variable-swap-only differentiation**: If the only differences between pages are proper nouns (city names, product names, keywords), flag as extremely high risk. This is the doorway and scaled content pattern.
+- **Doorway shape**: Many city/region/service combination pages that funnel users to one conversion page, or that are reachable mainly from search-like listings rather than a browseable hierarchy. Flag.
+- **Query-variation clusters**: Several pages whose primary keywords are paraphrases of one intent. Flag for merge.
+- **Filler content patterns**: Detect generic introductory paragraphs ("In today's world...", "When it comes to...", "If you're looking for...") that add no information.
+- **Value-first test**: Check if the primary content/answer appears within the first 200 words. Pages that bury value below filler can be rated Low by quality raters (QRG 5.2.2).
+- **E-E-A-T signal presence**: Check for author attribution, data sources, last-updated dates. Google says E-E-A-T is not a ranking factor itself, but trust matters most, so absence of all trust signals on pSEO pages is a risk factor.
+- **Non-commodity test**: Could a generic gen-AI model produce this page without your data? If yes, it is commodity content.
+- **Rollout size**: Large single-day batches are worth a review. Google does not document a "publication velocity" detector or any numeric page-count trigger; this is a precaution, not a known rule.
+- **Third-party scripts**: no back-button hijacking from ad or library code.
+
+**Severity (internal heuristics):**
+- Template repetitiveness > 80%: **Critical**, high risk of being treated as scaled content abuse
+- Template repetitiveness 60-80%: **Warning**, at risk, needs content enrichment
+- Doorway shape or variable-swap-only pages present: **Critical**
 - No E-E-A-T signals on any page: **Warning**
-- All pages published same day: **Warning**
+- Very large single-day batch: **Info**
 
 ### 8. Heading Hierarchy Validation
 
@@ -135,6 +159,9 @@ Check every page for correct heading structure:
 - Thin or utility pages have `noindex`
 - No important pages accidentally blocked by robots.txt
 - Sitemap includes all indexable pages and excludes noindexed ones
+- Pages with no data return a real 404/410 (not a 200 soft 404); in Next.js, `notFound()` after streaming has started returns 200
+- `noindex` in the initial HTML is not removed later by JS (Google may skip rendering and never index the page)
+- Low-value pages you host anyway are excluded from Search (noindex), per Google's scaled content guidance
 
 ## Output Format
 
@@ -163,8 +190,9 @@ Check every page for correct heading structure:
 ### Linking Issues
 - [list of orphan pages and broken links]
 
-### Scaled Content Abuse Risk
+### Scaled Content Abuse Risk (internal heuristics)
 - Template boilerplate ratio: X%
+- Doorway-shaped or query-variation clusters: X
 - Variable-swap-only pages: X
 - Pages missing E-E-A-T signals: X
 - Filler intro patterns detected: X pages
@@ -202,14 +230,14 @@ Always use the fingerprint approach at 500+ pages.
 
 ## Content Pruning Recommendations
 
-When quality checks find issues, don't just flag — recommend action. Google's own guidance: "If you're considering deleting entire sections of your site, that's likely a sign those sections were created for search engines first, and not people."
+When quality checks find issues, don't just flag - recommend action.
 
 See `references/thresholds.md` → "Content Pruning Decision Thresholds" for the exact decision table (conditions and actions).
 
-200 genuinely valuable pages outperform 5,000 thin pages. Pruning is not failure — it's quality control.
+200 genuinely valuable pages outperform 5,000 thin pages. Pruning is not failure - it's quality control.
 
 **After pruning:**
-- Add 301 redirects from removed URLs to the best related page
+- Use 301 only when a genuinely equivalent page exists; otherwise return 404/410
 - Update the sitemap to exclude removed pages
 - Update internal links that pointed to removed pages
 - Re-run quality guard to verify improved metrics
@@ -238,6 +266,7 @@ async function validate() {
     if (!page.title || !page.metaDescription || !page.h1) {
       issues.push({ slug, level: "critical", message: "Missing required metadata" });
     }
+    if (!page.title) continue;
     if (page.title.length > 70) {
       issues.push({ slug, level: "warning", message: `Title too long: ${page.title.length} chars` });
     }
@@ -263,7 +292,7 @@ If `$ARGUMENTS` specifies a check:
 - `metadata`: Metadata validation only
 - `abuse`: Scaled content abuse pattern detection only
 - `prune`: Run all checks and output pruning recommendations
-- `delta`: Run all checks on pages modified since last validation only (requires content hashing — see pseo-scale section 4)
+- `delta`: Run all checks on pages modified since last validation only (requires content hashing - see pseo-scale section 4)
 
 ## Relationship to Other Skills
 

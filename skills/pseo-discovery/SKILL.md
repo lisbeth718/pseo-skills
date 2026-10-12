@@ -15,7 +15,7 @@ This skill runs BEFORE pseo-audit. The audit checks if the codebase is ready; th
 
 1. **Data-first**: Only propose page types backed by structured data that exists or can be sourced
 2. **Intent-matched**: Every proposed page type must target a real search intent with volume
-3. **Differentiated**: Each page must be able to produce genuinely unique content — not just variable swaps
+3. **Differentiated**: Each page must be able to produce genuinely unique content - not just variable swaps
 4. **Feasible**: Proposals must be realistic given the current data, codebase, and team capacity
 5. **Business-aligned**: pSEO pages should serve the business's actual audience and goals
 
@@ -69,7 +69,7 @@ For each data asset found, evaluate whether it can power a pSEO page type:
 - **SaaS**: Feature pages, integration pages, `[tool] alternative`, `[tool] vs [competitor]`, use-case pages
 - **Marketplace**: Listing pages, location pages, `[service] in [city]`, category + location combinations
 - **Content/Media**: Topic pages, tag pages, author pages, `[topic] guide`, glossary/definition pages
-- **Local business**: Service + location pages, `[service] in [neighborhood]`, FAQ pages per service
+- **Local business**: Service + location pages, `[service] in [neighborhood]` (only with real local data, see risk table), service pages with real answers
 - **Directory**: Profile pages, category pages, comparison pages, `top [category] in [location]`
 
 ### 3. Identify Keyword Patterns and Search Intent
@@ -90,6 +90,25 @@ For each proposed page type, validate that search demand exists:
 
 Each pSEO page type should clearly map to one intent category.
 
+**Pattern risk under Google spam policies (state as of 2026-10):**
+
+| Pattern | Risk | Why |
+|---------|------|-----|
+| City x service pages with only the place name swapped | High | Doorway policy: pages "targeted at specific regions or cities that funnel users to one page"; also scaled content abuse |
+| Many pages for query variations or fan-out queries of one intent | High | Named in Google's AI optimization guide (2026-05-15) as scaled content abuse; also aimed at manipulating AI answers |
+| "Best X for Y" lists with no real data or first-hand testing | High | Commodity content; rater guidelines 4.6.6 (little-to-no effort, originality or added value) |
+| Substantially similar pages closer to search results than a browseable hierarchy | High | Doorway policy wording |
+| Auto-translated or synonymized copies of existing pages | High | Scaled content abuse (scraping, translation without value) |
+| Pages built only on scraped or aggregated third-party content | High | Scraping policy: no substantial added value |
+| Third-party content hosted on a strong domain mainly for its ranking signals | High | Site reputation policy (updated 2026-08-28) |
+| Pages that cover a real entity with proprietary or first-hand data (listings, prices, stats, measurements) | Viable | Value comes from the data, each page differs substantially |
+| Interactive tools and calculators with unique inputs/outputs | Viable | Custom functionality counts as effort in rater guidelines |
+| Comparisons backed by first-hand data or testing | Viable | Non-commodity content |
+| Location pages with real local data (inventory, staff, prices, reviews, regulations) in a browseable hierarchy | Viable with care | Needs substantive per-location content and a clear hierarchy |
+| Glossary, integration, profile pages with unique facts per record | Viable with care | Depends on per-record depth |
+
+Google publishes no numeric page-count or velocity limits. Judge each page type on added value, not volume. If a page type falls in a High row and the data does not clearly change that, reject it in the report.
+
 ### 4. Evaluate Data Sufficiency for Content Uniqueness
 
 For each proposed page type, assess whether the data produces genuinely unique pages:
@@ -100,10 +119,10 @@ Take 5 random records. For each, write out what the page would contain:
 - H1
 - Intro paragraph
 - Main content sections
-- FAQ questions
+- Real questions answered with page-specific data (not templated FAQ)
 
 If 3+ of these elements are essentially the same text with different proper nouns, the data is insufficient. Either:
-- Enrich the data (add more attributes, descriptions, FAQs per record)
+- Enrich the data (add more attributes, descriptions, real Q&A per record)
 - Combine data sources (e.g., product data + user reviews + competitor data)
 - Narrow the page type to records with richer data
 - Abandon the page type as a pSEO candidate
@@ -112,7 +131,7 @@ If 3+ of these elements are essentially the same text with different proper noun
 - 2+ unique text fields beyond title and description (for body content)
 - 3+ structured attributes (for data tables, stat highlights)
 - Category or taxonomy data (for hub-spoke linking)
-- Ideally: 3-5 FAQ pairs per record (for FAQ schema and content depth)
+- Ideally: page-specific answers to real user questions (for content depth; FAQ rich results no longer show in Google, so do not plan FAQPage schema)
 
 ### 5. Assess URL Structure and Taxonomy
 
@@ -137,7 +156,7 @@ Identify whether competitors are already doing pSEO for the same patterns:
 
 - Search for the target keyword patterns and see what ranks
 - Check if competitors have programmatic pages (signs: similar URL patterns, templated content, large indexed page counts)
-- Assess competitor content quality — can you do meaningfully better?
+- Assess competitor content quality - can you do meaningfully better?
 - Look for gaps they haven't covered (long-tail variations, underserved locations, new categories)
 
 ### 7. Propose a pSEO Strategy
@@ -162,7 +181,7 @@ Compile findings into a ranked list of pSEO opportunities.
 - **Search intent**: [informational / commercial / transactional]
 - **Keyword pattern**: [e.g., "[service] in [city]"]
 - **Data source**: [where the data comes from]
-- **Content uniqueness**: [High / Medium / Low — with justification]
+- **Content uniqueness**: [High / Medium / Low - with justification]
 - **Data gaps**: [what fields are missing or need enrichment]
 - **Feasibility**: [Ready / Needs data enrichment / Needs new data source]
 
@@ -245,4 +264,4 @@ If running within a single Claude Code session, the report can also be kept in c
 
 - **Runs before**: All other pseo-* skills
 - **Feeds into**: pseo-audit (what to look for), pseo-data (what models to build)
-- **Independent of**: All implementation skills — this is pure research
+- **Independent of**: All implementation skills - this is pure research

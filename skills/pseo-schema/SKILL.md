@@ -1,13 +1,15 @@
 ---
 name: pseo-schema
-description: Implement JSON-LD structured data and schema markup for programmatic SEO pages, including Article, FAQ, Breadcrumb, Product, and other context-specific schema types. Use when adding or fixing schema markup, implementing structured data, or when Google Search Console reports schema errors.
-argument-hint: "[types: Article | FAQ | Breadcrumb | Product | HowTo | all]"
+description: Implement JSON-LD structured data for programmatic SEO pages using types that still produce Google rich results (Product, Organization, LocalBusiness, BreadcrumbList, Article, JobPosting, Event, Review snippets and similar). Use when adding or fixing schema markup, removing retired types (FAQ, HowTo), or when Google Search Console reports schema errors. Markup must match visible content; no special schema is needed for AI features.
+argument-hint: "[types: Article | Product | LocalBusiness | Organization | Breadcrumb | JobPosting | Event | all]"
 allowed-tools: Read, Glob, Grep, Bash, Edit, Write
 ---
 
 # pSEO Schema Markup
 
-Implement JSON-LD structured data that gives search engines explicit semantic understanding of every programmatic page.
+Implement JSON-LD structured data that describes what is visibly on each programmatic page, so eligible pages can qualify for rich results.
+
+Research basis: https://github.com/lisbeth718/pseo-skills/blob/main/docs/research-2026-10.md (primary sources, 2026-10-12).
 
 ## Core Principles
 
@@ -16,27 +18,50 @@ Implement JSON-LD structured data that gives search engines explicit semantic un
 3. **Data-driven generation**: Schema is built from the same data that drives the page
 4. **Valid and complete**: Every schema block must pass Google's Rich Results Test
 5. **No fabrication**: Only include fields backed by real data
+6. **Matches visible content**: Structured data must match the text users see on the page (Google's AI features docs repeat this)
+7. **Review it like content**: Google says to manually fact-check AI-generated structured data, along with titles, meta descriptions and alt text
 
-## Baseline Schema (Every Page)
+## What Schema Does and Does Not Do (as of 2026-10-12)
 
-Every pSEO page should include these foundational types:
+- **Rich results only.** The value of schema in Google Search is rich-result eligibility. It is not a ranking tactic.
+- **No special schema for AI features.** Google states AI Overviews and AI Mode need no special schema.org markup, and tells sites not to over-focus on structured data. Do not add markup "for AI" or "for LLM extraction".
+- **Retired in Google Search, do not generate for rich results:**
+  - FAQ rich results: no longer shown from 2026-05-07, docs removed 2026-06-15
+  - HowTo (removed 2023) and Sitelinks search box (removed 2024)
+  - Practice problems (deprecated 2025-11-05, docs removed 2026-01-06)
+  - Course info, Estimated salary, Learning video, Special announcement, Vehicle listing (phased out, docs removed 2025-09-09)
+  - ClaimReview: being phased out in Google Search
+- **Dataset** markup is only used by Dataset Search since 2025-11-05, not Google Search.
+- **Breadcrumbs:** mobile results show the domain only since 2025-01-23. Desktop still shows breadcrumbs, and BreadcrumbList markup remains supported.
 
-- `WebSite` — once per site (on the homepage or via a shared layout), declares site-level search and name
-- `WebPage` — on every page, declares the page URL, name, description, and dateModified
-- `BreadcrumbList` — on every page with navigation hierarchy
+## FAQPage: Optional Semantic Markup Only
+
+FAQPage no longer produces a rich result in Google. Do not add it for SERP real estate, ranking, or AI visibility. Keep it only if another consumer needs it (for example a non-Google parser) and the Q&A is fully visible on the page. If you have existing FAQPage or HowTo generators, remove them from the default page composition. Visible FAQ sections on the page can stay if they help users; they just do not need markup.
+
+## Baseline Schema
+
+- `BreadcrumbList`: on every page with a navigation hierarchy (desktop breadcrumb display)
+- `Organization`: site-level, once per site (homepage or shared layout). The logo now lives in the Organization docs.
+- `WebPage` / `WebSite`: optional semantic markup. They produce no Google rich result by themselves, so treat as low priority. Do not add a sitelinks search box (retired).
 
 These are in addition to the content-specific types below.
 
 ## Schema Types by Page Context
 
+Only types in Google's Search Gallery (page last updated 2026-06-15) are listed as primary.
+
 | Page Type | Primary Schema | Supporting Schema |
 |-----------|---------------|-------------------|
-| Content/article page | `Article` | `BreadcrumbList`, `FAQPage`, `WebPage` |
-| Product page | `Product` | `BreadcrumbList`, `AggregateRating`, `WebPage` |
-| FAQ/Q&A page | `FAQPage` | `BreadcrumbList`, `WebPage` |
-| How-to/tutorial page | `HowTo` | `BreadcrumbList`, `FAQPage`, `WebPage` |
-| Category/hub page | `CollectionPage` | `BreadcrumbList`, `ItemList`, `WebPage` |
-| Local/location page | `LocalBusiness` | `BreadcrumbList`, `FAQPage`, `WebPage` |
+| Content/article page | `Article` | `BreadcrumbList`, `Organization` |
+| Product page | `Product` (product snippet / merchant listing) | `BreadcrumbList`, `Offer`, review snippet fields where real |
+| Category/hub page | `BreadcrumbList` (no hub-specific rich result exists) | `CollectionPage`, `ItemList` (optional semantic markup, no rich result; carousel only if eligible) |
+| Local/location page | `LocalBusiness` | `BreadcrumbList`, `Organization` |
+| Job page | `JobPosting` | `BreadcrumbList`, `Organization` |
+| Event page | `Event` (must be bookable by the public at a physical location) | `BreadcrumbList` |
+| Software page | `SoftwareApplication` | `BreadcrumbList` |
+| Q&A / forum page | `QAPage` or `DiscussionForumPosting` (real user content only) | `BreadcrumbList` |
+
+Other Search Gallery types that fit some pSEO sites: Recipe, Video, Vacation rental, Profile page, Return policy, Shipping policy, Loyalty program, Employer rating, Image license metadata. Use them only when the page genuinely is that thing.
 
 ## Implementation Steps
 
@@ -61,10 +86,32 @@ export function generateArticleSchema(data: PageData, url: string) {
   };
 }
 
-// IMPORTANT: FAQPage schema is ONLY valid when the FAQ content is
-// visible on the page itself. Google requires the questions and answers
-// to be present in the rendered HTML, not just in the JSON-LD.
-// Never add FAQPage schema to a page that does not render the FAQs.
+export function generateProductSchema(data: ProductData, url: string) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: data.name,
+    description: data.description,
+    url,
+    image: data.images,
+    ...(data.category && { category: data.category }),
+    // Only include offers when price and availability are visible on the page
+    ...(data.price && {
+      offers: {
+        "@type": "Offer",
+        price: data.price,
+        priceCurrency: data.currency,
+        availability: data.availabilityUrl,
+        ...(data.priceValidUntil && { priceValidUntil: data.priceValidUntil }),
+      },
+    }),
+  };
+}
+
+// FAQPage: OPTIONAL semantic markup only. Google retired the FAQ rich
+// result (not shown from 2026-05-07) and no special schema is needed for AI
+// features. Do not use this as a ranking or AI tactic. If used, the Q&A
+// must be visible in the rendered HTML, never only in the JSON-LD.
 export function generateFAQSchema(faqs: FAQ[]) {
   if (!faqs?.length) return null;
   return {
@@ -78,17 +125,6 @@ export function generateFAQSchema(faqs: FAQ[]) {
         text: faq.answer,
       },
     })),
-  };
-}
-
-export function generateWebPageSchema(data: PageData, url: string) {
-  return {
-    "@context": "https://schema.org",
-    "@type": "WebPage",
-    name: data.title,
-    description: data.metaDescription,
-    url,
-    dateModified: data.lastModified,
   };
 }
 
@@ -110,7 +146,7 @@ export function generateBreadcrumbSchema(
 
 ### 2. Create the Schema Renderer Component
 
-Build a reusable component that injects JSON-LD into the page head:
+Build a reusable component that injects JSON-LD into the page. Escape `<` so data cannot close the script tag:
 
 ```typescript
 export function JsonLd({ data }: { data: Record<string, unknown> | null }) {
@@ -118,11 +154,15 @@ export function JsonLd({ data }: { data: Record<string, unknown> | null }) {
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+      dangerouslySetInnerHTML={{
+        __html: JSON.stringify(data).replace(/</g, "\\u003c"),
+      }}
     />
   );
 }
 ```
+
+Keep JSON-LD small. Googlebot for Search reads only the first 2MB of uncompressed HTML, so do not inline huge `ItemList` or dataset blobs on every page.
 
 ### 3. Compose Schema per Page
 
@@ -133,7 +173,6 @@ Each page template composes its schema from multiple generators:
 const schemas = [
   generateArticleSchema(data, canonicalUrl),
   generateBreadcrumbSchema(breadcrumbItems),
-  data.faqs?.length ? generateFAQSchema(data.faqs) : null,
 ].filter(Boolean);
 
 // Render each as a separate script tag
@@ -142,13 +181,13 @@ const schemas = [
 
 ### 4. Schema Field Rules
 
-**Required fields per type:**
+**Required fields per type** (check the type's current Google doc, requirements change):
 
 - `Article`: headline, url, datePublished, dateModified, author, publisher
-- `FAQPage`: mainEntity with at least 1 Question/Answer pair
 - `BreadcrumbList`: itemListElement with position, name, item
-- `Product`: name, description; offers or review if available
-- `HowTo`: name, step (with text for each step)
+- `Product`: name, description, image; offers or review if available and visible on the page
+- `LocalBusiness`: name, address; plus the fields Google lists for the business type
+- `JobPosting`, `Event`: follow the current Google doc for required properties
 
 **Field integrity rules:**
 - `headline` must match the page's H1 or title
@@ -156,6 +195,15 @@ const schemas = [
 - `dateModified` must be a valid ISO 8601 date
 - Never include empty strings or placeholder values
 - Never include fields with fabricated data (e.g., fake reviews)
+- Every value must be visible on the page or derivable from what is visible
+
+**Review snippets:**
+- Only mark up real, first-party-visible reviews and ratings
+- Avoid multiple ways of indicating the reviewed item (Google, 2025-11-12)
+- No fake or undisclosed incentivized reviews (Google guideline, 2026-07-24)
+- Never generate `AggregateRating` from invented numbers
+
+**Product sale pricing:** use `validFrom`, `validThrough` and `priceValidUntil` for sale durations (Google, 2026-07-07).
 
 ### 5. Handle Multiple Schema Types
 
@@ -166,15 +214,18 @@ A single page can have multiple schema blocks. Render them as separate `<script 
 Schema must:
 - Pass Google's Rich Results Test (https://search.google.com/test/rich-results)
 - Pass Schema.org validation
-- Not include deprecated properties
+- Match the visible page content
+- Not include deprecated properties or retired types
 - Not include fields with empty or placeholder values
 - Use absolute URLs, not relative paths
 
+Watch Search Console enhancement reports. Retired features (FAQ, HowTo, Course info and others) are gone from reports and the Rich Results Test, so a clean report there does not mean the markup does anything.
+
 ### 6. E-E-A-T Schema Support
 
-Google's 2025 updates weight Experience, Expertise, Authoritativeness, and Trustworthiness heavily. Schema markup can reinforce these signals:
+E-E-A-T is not a specific ranking factor, but trust matters, especially on YMYL topics. Schema can state authorship and responsibility clearly. It reinforces what the visible page already shows; it does not replace it.
 
-**Author/Organization schema on every page:**
+**Author/Organization schema:**
 ```typescript
 export function generateAuthorSchema(author: AuthorInfo) {
   return {
@@ -188,9 +239,9 @@ export function generateAuthorSchema(author: AuthorInfo) {
 }
 ```
 
-**Add `author` and `publisher` to Article schema** (already included but emphasize this is now critical, not optional).
+**Add `author` and `publisher` to Article schema** and show the same attribution on the page.
 
-**dateModified must be accurate** — Google has increased weighting on freshness signals. Never set dateModified to today's date if the content hasn't actually changed. Use the real last-modified date from the data source.
+**dateModified must be accurate.** Never set dateModified to today's date if the content has not actually changed. Use the real last-modified date from the data source. The same rule applies to sitemap `lastmod`, which Google uses only if it is consistently accurate.
 
 **For YMYL content, additionally include:**
 - `reviewedBy` on medical/health content (Person with `MedicalBusiness` or `Physician` type)

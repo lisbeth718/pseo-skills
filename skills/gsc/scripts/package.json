@@ -1,0 +1,11 @@
+{
+  "name": "gsc-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Google Search Console helper scripts (auth, pull, inspect, sitemaps)",
+  "dependencies": {
+    "googleapis": "^144.0.0",
+    "tsx": "^4.19.0"
+  }
+}
