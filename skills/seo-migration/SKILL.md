@@ -9,6 +9,18 @@ allowed-tools: Read, Glob, Grep, Bash, Edit, Write, WebFetch
 
 Move URLs without losing indexing, rankings or backlink value. Source: [site moves with URL changes](https://developers.google.com/search/docs/crawling-indexing/site-move-with-url-changes).
 
+## Scope parameter
+
+| Value | Sections |
+|---|---|
+| `inventory` | Phase 1 |
+| `redirect-map` | Phase 2 |
+| `implement` | Phase 3 |
+| `launch` | Phases 4 and 5 |
+| `monitor` | Phase 6, Timeline Expectations |
+| `rollback` | Rollback Plan |
+| `all` (default) | everything |
+
 ## Core Principles
 
 1. **Every old URL that had value maps 1:1 to its closest new equivalent** with a server-side permanent redirect (301 or 308)
@@ -94,12 +106,14 @@ async redirects() {
 
 ```typescript
 // proxy.ts - lookup for large maps
-import { kv } from "@vercel/kv"; // or Redis / DB / your store; full map lives here
+import { Redis } from "@upstash/redis"; // @vercel/kv is sunset; or any DB / store. The full map lives there
 import { NextRequest, NextResponse } from "next/server";
+
+const redis = Redis.fromEnv(); // UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN (or the KV_REST_API_* names the Vercel Marketplace integration sets)
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  const target = await kv.get<string>(`r:${pathname}`);
+  const target = await redis.get<string>(`r:${pathname}`);
   if (target) return NextResponse.redirect(new URL(target, req.url), 308);
 }
 
@@ -107,7 +121,7 @@ export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)
 ```
 
 Notes:
-- Edge Config (now Global Config) is a poor fit for large maps: keys only allow `[A-Za-z0-9_-]` (encode paths with base64url or a hash) and the store is capped at 1 MB on all plans per Vercel's limits page (checked 2026-10; older docs listed 8KB/64KB/512KB). Use it for small maps or a bloom filter only.
+- Edge Config (now Global Config) is a poor fit for large maps: keys must match `^[\w-]+$` (encode paths with base64url or a hash) and the store is capped at 1 MB on all plans per Vercel's limits page (checked 2026-10; older docs listed 8KB/64KB/512KB). Use it for small maps or a bloom filter only.
 - The matcher excludes only Next static assets so legacy `.html`/`.php`/`.aspx`/`.pdf` URLs reach the lookup. Keep it that narrow. Redirect migrated assets (images, PDFs) separately.
 - Cache lookups; redirect latency adds to every old-URL hit by users and Googlebot.
 - Domain move: redirect at the old host (DNS/CDN/server level) with path preserved: `old.com/x` to `new.com/x`, or through the map if paths change.
@@ -136,6 +150,8 @@ Notes:
 4. **Keep the old sitemap** submitted for now so you can watch Google process the old URLs (redirect warnings in it are expected). Remove once the new URLs are picked up
 5. Domain moves only: use the **Change of Address** tool on the old property, for every verified variant. Do not use it for HTTP to HTTPS, www toggles or path changes
 6. Update external profiles, Google Business Profile, ads, email templates, and ask top linking sites to update links
+
+7. **Verify**: run seo-regression-guard against the live site with the pre-migration baseline (`--site <new origin> --baseline .seo-baseline.json`). Expect baseline-origin or sitemap-origin warnings on a domain move, zero errors, and review every regression line (old URLs now redirecting are intended; anything else is not).
 
 ## Phase 6: Monitoring
 

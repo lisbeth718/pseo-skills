@@ -69,8 +69,8 @@ Cannibalization occurs when multiple pages target the same search query.
 **Resolution strategies:**
 - Merge thin pages targeting the same keyword into one comprehensive page
 - Differentiate intent (informational vs. transactional vs. navigational)
-- Use canonical tags to point duplicates to the primary page
-- Differentiate by real intent or entity; otherwise merge the pages
+- Canonical only for true duplicates (same content, different URL); it is not a cannibalization fix
+- Cannibalization fix: merge + 301, or differentiate intent/entity
 
 ### 4. Metadata Quality Validation
 
@@ -156,12 +156,11 @@ Check every page for correct heading structure:
 ### 9. Robots and Indexation
 
 - Pages intended for indexing have `index, follow` (or no robots tag)
-- Thin or utility pages have `noindex`
+- Thin pages are not generated, or return 404/410. `noindex` only for pages useful to users but not for Search (utility, filtered views, share and tool-output pages per Google's UGC spam guide, 2026-10-26)
 - No important pages accidentally blocked by robots.txt
 - Sitemap includes all indexable pages and excludes noindexed ones
 - Pages with no data return a real 404/410 (not a 200 soft 404); in Next.js, `notFound()` after streaming has started returns 200
 - `noindex` in the initial HTML is not removed later by JS (Google may skip rendering and never index the page)
-- Low-value pages you host anyway are excluded from Search (noindex), per Google's scaled content guidance
 
 ## Output Format
 
@@ -251,7 +250,8 @@ This skill can be turned into a build-time validation script:
 // Run: npx tsx scripts/validate-pseo.ts
 // CI/CD: exits with code 1 if critical issues found
 
-import { getAllSlugs, getPageData } from "../lib/data";
+// Import the pure fetchers from lib/data/source.ts (pseo-data splits pure fetchers from "use cache" wrappers)
+import { getAllSlugs, getPageData } from "../lib/data/source";
 
 async function validate() {
   const slugs = await getAllSlugs();

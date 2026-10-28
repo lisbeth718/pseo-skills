@@ -3,7 +3,7 @@
 //        [--start YYYY-MM-DD --end YYYY-MM-DD]   (override --days)
 //        [--queries 500] [--pages 200] [--top-pages 30]
 //        [--out data/gsc-queries.json] [--dims query,page]
-// --pages 25000 pulls every page. --dims query,page adds a full query+page
+// --pages 1000000 pulls every page the API exposes (max ~50K rows/day/search type; use bulk export for big sites). --dims query,page adds a full query+page
 // dataset (paginated, 25,000 rows per request) as `queryPages`.
 import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';

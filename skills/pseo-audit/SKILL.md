@@ -33,7 +33,9 @@ If **pseo-discovery** was run first, use its output to focus the audit: check wh
 - Check if templates produce unique content per page or rely on the same copy with minor variable swaps
 - Look for catch-all routes that may create orphan or thin pages
 - Verify 404 handling for invalid slugs, and for empty or nonsensical combinations (faceted/filter/location combos with no data must return a real 404 at the URL, not a redirect to a generic error page)
-- Next.js 16 soft-404 check: `notFound()` called after streaming has started (inside a Suspense boundary, or after `loading.tsx` renders) returns HTTP 200 with an injected `noindex`, and Google may label it a soft 404. The existence check must run before any Suspense fallback, or in `proxy.ts`. Also note that with Cache Components `generateStaticParams` must return at least one param
+- Next.js streaming soft-404 (`notFound()` after Suspense returns 200 + noindex): existence check must run before any Suspense fallback. Rules in pseo-templates section 6a
+- Raw-HTML parity: for a sample URL per template run `curl -s URL | grep -i -E '<h1|<a href'` and confirm the H1, main body text and internal `<a href>` links are in the server HTML, not client-only. Body checks are also covered by seo-regression-guard
+- URL check: slugs use hyphens, not underscores (Google URL structure doc, 2026-10-23); flag `_` in generated URLs
 
 ### 4. Review SEO Foundations
 
@@ -45,8 +47,7 @@ If **pseo-discovery** was run first, use its output to focus the audit: check wh
 - Verify canonical URLs are set and self-referencing by default
 - Metadata placement: Next.js may stream `generateMetadata` output into `<body>` for JS-executing bots. Google respects robots meta in the body (2026-03-24) but its canonical docs specify `<head>`, and the canonical in the original HTML must match the JS canonical. Prefer static or `use cache` metadata so canonical and robots render in the head shell (this is a recommendation, not a Google statement), or set `htmlLimitedBots`
 - `noindex` in the initial HTML: confirm no page ships `noindex` that JS later removes (Google may skip rendering and never index it). Check `loading.tsx`/streaming fallbacks that inject noindex
-- Googlebot HTML size: Googlebot for Search fetches only the first 2MB of uncompressed HTML (each CSS/JS resource has its own cap). Check pages for inline JSON, RSC payloads, or giant tables that push key content, canonical or links past 2MB
-- Sitemap: `<lastmod>` must be a real content-modified timestamp (build-time `new Date()` makes it unverifiable and Google then ignores it); Google ignores `<priority>` and `<changefreq>`; limits 50,000 URLs / 50MB per file; Next.js `generateSitemaps` does not create a sitemap index, so check one is written and submitted
+- Googlebot 2MB HTML limit (includes headers) and sitemap rules (lastmod, 50,000 URLs / 50MB, index file): check against pseo-templates section 6b and pseo-linking section 6
 - Structured data: flag FAQPage and HowTo generation (FAQ rich results stopped showing 2026-05-07; HowTo removed 2023)
 - AI features controls: check `nosnippet`, `max-snippet`, `data-nosnippet` use matches intent (they limit use in AI Overviews and AI Mode); robots.txt and CDN do not block Googlebot; note the Search Console "Search generative AI" setting and that `Google-Extended` does not control AI Overviews or AI Mode. `llms.txt` has no effect on Google Search
 
@@ -70,7 +71,7 @@ If **pseo-discovery** was run first, use its output to focus the audit: check wh
 - Look for content length or quality validation
 - Search for duplicate content detection or prevention
 - Check if pages have sufficiently differentiated titles and descriptions
-- Look for noindex rules on thin or utility pages
+- Check that thin pages are not generated or return 404/410; `noindex` only on utility/share/tool-output pages
 - Look for doorway-shaped page types (city/region combos with only the place swapped, query-variation pages) and for a policy of excluding low-value pages from Search
 - Check for a build-time or CI quality check (see pseo-quality-guard)
 
@@ -121,7 +122,7 @@ If discovery was run, confirm which proposed page types are feasible given codeb
 ## Scope Parameter
 
 If `$ARGUMENTS` specifies a scope, narrow the audit:
-- `full` (default): Run all sections
+- `full` (default): Run all sections (1-7)
 - `routing`: Sections 1, 3 only
 - `data`: Sections 1, 2 only
 - `seo`: Sections 4, 5, 7 only

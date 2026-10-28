@@ -70,11 +70,15 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX idx_pages_title_trgm ON pages USING gin(title gin_trgm_ops);
 
 -- Find pages with similar titles (potential cannibalization)
+-- The % operator uses the GIN index and respects this threshold
+SET pg_trgm.similarity_threshold = 0.7;
+
 SELECT a.slug, b.slug, similarity(a.title, b.title) AS sim
 FROM pages a
-JOIN pages b ON a.slug < b.slug  -- avoid self-join and duplicate pairs
-WHERE similarity(a.title, b.title) > 0.7
-  AND a.status = 'published'
+JOIN pages b ON a.slug < b.slug              -- avoid self-join and duplicate pairs
+            AND a.category = b.category      -- compare within a category, not all pairs
+            AND a.title % b.title
+WHERE a.status = 'published'
   AND b.status = 'published';
 ```
 
@@ -107,12 +111,14 @@ async function getCachedPageIndex(slug: string): Promise<PageIndex | null> {
   const cached = await redis.get(`page:index:${slug}`);
   if (cached) return JSON.parse(cached);
 
-  const page = await db.query(
+  // pg Pool: query() returns { rows }
+  const { rows } = await pool.query(
     `SELECT slug, title, h1, meta_description, canonical_path,
             category, last_modified
      FROM pages WHERE slug = $1 AND status = 'published'`,
     [slug]
   );
+  const page = rows[0];
   if (!page) return null;
 
   await redis.setex(`page:index:${slug}`, CACHE_TTL, JSON.stringify(page));
@@ -122,9 +128,9 @@ async function getCachedPageIndex(slug: string): Promise<PageIndex | null> {
 // Cache invalidation on data change
 async function invalidatePageCache(slug: string) {
   await redis.del(`page:index:${slug}`);
-  const page = await db.query("SELECT category FROM pages WHERE slug = $1", [slug]);
-  if (page) {
-    await redis.del(`category:pages:${page.category}`);
+  const { rows } = await pool.query("SELECT category FROM pages WHERE slug = $1", [slug]);
+  if (rows[0]) {
+    await redis.del(`category:pages:${rows[0].category}`);
   }
 }
 ```
@@ -152,23 +158,27 @@ const runtimePool = new Pool({
   connectionTimeoutMillis: 3000,
 });
 
-export const pool = process.env.BUILD_PHASE ? buildPool : runtimePool;
+export const pool = process.env.NEXT_PHASE === 'phase-production-build' ? buildPool : runtimePool;
 ```
 
 ### Prisma
 
-```
-// schema.prisma
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  // Connection pooling for serverless
-  directUrl = env("DIRECT_DATABASE_URL")
-}
+Prisma 7 moves connection URLs out of `schema.prisma` into `prisma.config.ts` (the `directUrl` property was removed in favor of `datasource.url`; verified at prisma.io/docs/orm/reference/prisma-config-reference, 2026-10-28):
 
-// In code: Prisma handles pooling automatically, but limit:
-// DATABASE_URL="postgresql://...?connection_limit=10&pool_timeout=10"
+```typescript
+// prisma.config.ts
+import "dotenv/config";
+import { defineConfig, env } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  datasource: {
+    url: env("DATABASE_URL"), // CLI (migrate): use a direct connection that bypasses the pooler
+  },
+});
 ```
+
+At runtime, pass the pooled connection through the driver adapter / client config and limit pool size (for example `connection_limit=10&pool_timeout=10` on older Prisma versions). On Prisma 6 and earlier, `directUrl` in `schema.prisma` is the migration URL that bypasses the pooler. Check your installed version.
 
 ### Drizzle
 
@@ -202,7 +212,7 @@ import data from "../data/pages.json";
 
 async function migrate() {
   for (const page of data) {
-    await db.query(
+    await pool.query(
       `INSERT INTO pages (slug, title, h1, meta_description, ...)
        VALUES ($1, $2, $3, $4, ...)
        ON CONFLICT (slug) DO UPDATE SET ...`,

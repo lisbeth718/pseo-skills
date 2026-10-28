@@ -2,7 +2,7 @@
 name: pseo-discovery
 description: Analyze a codebase and business context to discover programmatic SEO opportunities, identifying what page types to generate, what data assets exist, and what search intent can be matched at scale. Use when starting a new pSEO project, when the user isn't sure what to build programmatically, or when exploring what structured data exists in the codebase or business that could power scalable pages.
 argument-hint: "[focus: codebase | business | keywords | all]"
-allowed-tools: Read, Glob, Grep, Bash, WebSearch, WebFetch
+allowed-tools: Read, Glob, Grep, Bash, Write, WebSearch, WebFetch
 ---
 
 # pSEO Discovery
@@ -63,14 +63,7 @@ For each data asset found, evaluate whether it can power a pSEO page type:
 | Can each page be meaningfully different? | Not just variable swaps |
 | Does this serve the business? | Drives traffic the business can convert |
 
-**Common pSEO page patterns by business type:**
-
-- **E-commerce**: Product pages, category pages, brand pages, `[product] vs [product]` comparisons, `best [category] for [use-case]`
-- **SaaS**: Feature pages, integration pages, `[tool] alternative`, `[tool] vs [competitor]`, use-case pages
-- **Marketplace**: Listing pages, location pages, `[service] in [city]`, category + location combinations
-- **Content/Media**: Topic pages, tag pages, author pages, `[topic] guide`, glossary/definition pages
-- **Local business**: Service + location pages, `[service] in [neighborhood]` (only with real local data, see risk table), service pages with real answers
-- **Directory**: Profile pages, category pages, comparison pages, `top [category] in [location]`
+**Common pSEO page patterns by business type:** see `references/pseo-patterns.md`. In short: pick page types where each record is a real entity with its own data (products, listings, locations with real local data, integrations, glossary terms), and compare them against the risk table in step 3.
 
 ### 3. Identify Keyword Patterns and Search Intent
 
@@ -213,6 +206,8 @@ If `$ARGUMENTS` specifies a focus:
 - `business`: Focus on business entity mapping and page type proposals (steps 2-4)
 - `keywords`: Focus on keyword patterns and competitive landscape (steps 3, 6)
 
+Section numbers above refer to the numbered steps under Discovery Procedure.
+
 ## YMYL Risk Assessment
 
 Google's September 2025 Quality Rater Guidelines expanded YMYL (Your Money or Your Life) to include civic information alongside health, finance, and legal content. pSEO in YMYL verticals carries elevated risk.
@@ -236,7 +231,7 @@ Google's September 2025 Quality Rater Guidelines expanded YMYL (Your Money or Yo
 **Discovery output should include a YMYL assessment:**
 ```
 ### YMYL Assessment
-- YMYL category: [None | Health | Finance | Legal | Civic | Safety]
+- YMYL category: [None | Health | Finance | Legal | Civic | Safety | News]
 - Risk level: [Low | Medium | High]
 - Recommendation: [Standard pSEO OK | Needs elevated quality standards | Human review per page required | pSEO not recommended for this vertical]
 ```
@@ -254,7 +249,7 @@ If running within a single Claude Code session, the report can also be kept in c
 
 ## Important Constraints
 
-- This is a research-only skill. Do NOT modify code or create files.
+- This is a research-only skill. Do not modify code; the only file written is `.pseo/discovery-report.md`.
 - Be honest about data gaps. Don't propose page types the data can't support.
 - Quantity of pages is not the goal. 200 genuinely unique pages beats 5,000 thin pages.
 - If the codebase has no usable structured data, say so. The answer may be "build the data layer first" or "this business isn't a good fit for pSEO."

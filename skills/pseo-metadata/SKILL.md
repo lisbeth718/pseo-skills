@@ -1,7 +1,7 @@
 ---
 name: pseo-metadata
 description: Implement fully dynamic SEO metadata including title tags, meta descriptions, canonical URLs, Open Graph tags, and Twitter cards for programmatic SEO pages. Use when setting up or fixing metadata, adding OG/Twitter tags, implementing canonical URLs, or when metadata is static, duplicated, or missing across pSEO pages.
-argument-hint: "[scope: all | titles | descriptions | canonical | opengraph | twitter]"
+argument-hint: "[scope: all | titles | descriptions | canonical | opengraph | twitter | robots | export | i18n]"
 allowed-tools: Read, Glob, Grep, Bash, Edit, Write
 ---
 
@@ -14,8 +14,12 @@ Implement a metadata system that generates unique, accurate SEO tags for every p
 1. **Every page gets unique metadata**: No two pages share the same title or description
 2. **Data-driven generation**: Metadata is constructed from structured content fields, not hardcoded
 3. **Canonical by default**: Every page declares its canonical URL, in the `<head>` of the initial HTML
-4. **Social-ready**: Open Graph and Twitter cards are complete on every page
+4. **Social-ready**: Open Graph and Twitter cards are complete on every page, with a page-specific or per-category image (never one site-wide placeholder)
 5. **Framework-native**: Use the framework's built-in metadata API
+
+## Scope parameter
+
+`all` (default) = everything. `titles` = section 2, `descriptions` = section 3, `canonical` = section 4 (and 8a), `opengraph` = section 5, `twitter` = section 6, `robots` = sections 7, 7a, 7b, `export` = sections 8 and 8a, `i18n` = section 9.
 
 ## Implementation Steps
 
@@ -101,8 +105,13 @@ Required OG tags for every pSEO page:
 - `og:url` - Must match canonical
 - `og:type` - Usually "article" for content pages, "website" for hubs
 - `og:site_name` - Consistent across all pages
-- `og:image` - Page-specific or category-specific image with alt text
+- `og:image` - Page-specific image, else a per-category image generated with `opengraph-image.tsx` (`ImageResponse`); never one site-wide placeholder. Always include alt text
 - `og:locale` - Language/locale setting
+
+Image SEO for these images (details in pseo-templates section 9):
+- Descriptive, data-driven `alt` on every image, fact-checked if AI-written.
+- Important images belong in an image sitemap: see pseo-linking section 6.
+- AI-generated images carry IPTC digital source type `TrainedAlgorithmicMedia` in the file metadata (Merchant Center requires it; see the [research doc](https://github.com/lisbeth718/pseo-skills/blob/main/docs/research-2026-10.md)).
 
 ### 6. Configure Twitter Card Tags
 
@@ -115,7 +124,7 @@ Required Twitter tags:
 ### 7. Add Supplementary Meta Tags
 
 Where appropriate:
-- `robots`: Default to `index, follow`; set `noindex` for thin/utility pages
+- `robots`: Default to `index, follow`; set `noindex` only for utility, filtered-view and share/tool-output pages; thin pages are not generated or return 404/410 (pseo-data, Data Sufficiency First)
 - Put `noindex` in the initial HTML when you mean it, and do not rely on JavaScript to remove it later. If the original HTML has `noindex`, Google may skip rendering and never see the JS change (Google, 2025-12-15). Pages you may want indexed should not ship `noindex` at all.
 - Do not use `noindex` to save crawl budget; Google still requests the URL. Use 404/410 for removed pages and robots.txt for URL spaces you never want crawled.
 - `author`: If content has an author
@@ -141,7 +150,7 @@ Google respects robots meta tags in the body (2026-03-24), but still keep robots
 
 ### 7b. HTML Size
 
-Googlebot for Search fetches only the first 2MB of uncompressed HTML (documented 2026-02-03); each CSS/JS resource has its own cap. Metadata that sits past 2MB is not read. Keep inline JSON, RSC payloads and giant tables small, and keep head tags first.
+Keep head tags first and the HTML small. The 2MB Googlebot limit and how to stay under it: see pseo-templates section 6b.
 
 ### 8. Export Metadata in Page Files
 
@@ -149,12 +158,15 @@ Wire the metadata generator into every page route. In Next.js 16, `params` is a 
 
 ```typescript
 // app/[category]/[slug]/page.tsx
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+
 export async function generateMetadata(
   { params }: { params: Promise<{ category: string; slug: string }> }
 ): Promise<Metadata> {
-  const { slug } = await params;
+  const { category, slug } = await params;
   const data = await getPageData(slug);
-  if (!data) return {};
+  if (!data || data.category !== category) notFound();
   return generatePageMetadata(data, process.env.NEXT_PUBLIC_BASE_URL!);
 }
 ```
@@ -177,29 +189,12 @@ const nextConfig: NextConfig = {
 export default nextConfig;
 ```
 
+- `htmlLimitedBots` replaces the default bot list, so the regex above must cover every bot you want to receive blocking metadata.
 - Verify with `curl -s URL | grep -i canonical` and check the tag appears inside `<head>`. This placement advice is an inference from Google's docs, not a Google guarantee.
 
-### 9. Internationalization (i18n) Metadata
+### 9. Multilingual
 
-For multi-language pSEO sites, add language-specific metadata:
-
-- **hreflang tags**: Declare all language variants of each page. Every page must link to all its translations including itself.
-  ```typescript
-  alternates: {
-    canonical: `${baseUrl}/${lang}${data.canonicalPath}`, // canonicalPath starts with "/"
-    languages: {
-      "en": `${baseUrl}/en${data.canonicalPath}`,
-      "de": `${baseUrl}/de${data.canonicalPath}`,
-      "x-default": `${baseUrl}/en${data.canonicalPath}`,
-    },
-  }
-  ```
-- **x-default**: Add `x-default` pointing to a language selector or default version when one exists
-- **Canonical per language**: Each language version gets its own canonical (e.g., `/en/service/slug` and `/de/service/slug` are each self-canonical)
-- **og:locale**: Set to the page's language (e.g., `en_US`, `de_DE`)
-- **og:locale:alternate**: List all other available locales
-- **URL structure**: Subdirectories (`/en/`, `/de/`) are the simplest default; avoid query params for language
-- **Title and description**: Must be translated, not just the body. Templated metadata in the target language.
+See seo-i18n (hreflang only for published locales; sitemap hreflang preferred). Do not hardcode language lists in metadata.
 
 ## Metadata Validation Rules
 
@@ -210,7 +205,7 @@ Run these checks (or integrate with pseo-quality-guard):
 - All descriptions are between 100-170 characters
 - All canonical URLs resolve to 200 status
 - Canonical and robots tags appear inside `<head>` in the raw HTML (curl, no JS)
-- Initial HTML is well under 2MB uncompressed
+- Initial HTML is well under the 2MB limit (pseo-templates section 6b)
 - All OG tags are present on every page
 - No page is missing metadata entirely
 
@@ -227,3 +222,7 @@ lib/
 - **Depends on**: pseo-data (content models provide metadata fields)
 - **Works with**: pseo-templates (metadata is exported alongside page components)
 - **Validated by**: pseo-quality-guard (checks uniqueness and completeness)
+
+## Verify
+
+Build, start the app, and run seo-regression-guard against localhost (`npx -y tsx <seo-regression-guard-dir>/scripts/seo-check.ts --site http://localhost:3000`). Zero errors for the touched templates; canonical and robots appear inside `<head>` in the raw HTML.

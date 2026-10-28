@@ -9,6 +9,16 @@ allowed-tools: Read, Glob, Grep, Bash, Edit, Write
 
 Optimize the application for fast builds, excellent Core Web Vitals, and reliable performance at 1000+ page scale.
 
+## Scope parameter
+
+| Value | Sections |
+|---|---|
+| `build` | 1, 2, 7, 8 |
+| `cwv` | 3, 6, 9 |
+| `bundle` | 4 |
+| `caching` | 5 |
+| `all` | everything |
+
 ## Core Principles
 
 1. **Static first**: Pre-render as many pages as possible at build time
@@ -41,7 +51,7 @@ export async function generateStaticParams() {
 export const revalidate = 86400; // 24 hours
 ```
 
-**Next.js 16.4 with Cache Components** (`cacheComponents: true`, enabled by default in `create-next-app` from 16.4, planned default in Next.js 17). Caching is opt-in via `"use cache"`, and dynamic is the default:
+**Next.js 16.4.x (>= 16.4.1 for security fixes) with Cache Components** (`cacheComponents: true`, enabled by default in `create-next-app` from 16.4, planned default in Next.js 17). Caching is opt-in via `"use cache"`, and dynamic is the default:
 ```typescript
 import { cacheLife, cacheTag } from "next/cache";
 import { notFound } from "next/navigation";
@@ -68,7 +78,7 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
 }
 ```
 - If you can't list any real params, return one placeholder param and call `notFound()` for it (the documented workaround).
-- Add `export const ensureStatic = "shell"` (or `"navigation"` / `"prefetch"`) on template routes that must stay static. The build fails if dynamic content sneaks in. Routes using `"navigation"` must return complete params.
+- `ensureStatic` (requires `cacheComponents`): only `"navigation"` adds build validation (the build fails if dynamic content sneaks in), and it requires `generateStaticParams` to return every param. `"shell"` and `"prefetch"` add no build validation. With seeded params and on-demand rest, do not claim `ensureStatic` validates anything. Details: https://github.com/lisbeth718/pseo-skills/blob/main/docs/research-2026-10.md (section 11.4).
 - Invalidate with `revalidateTag(tag, profile)` (a cache-life profile is required in Next.js 16), `updateTag(tag)` for read-your-writes in Server Actions, or `refresh()`.
 - Turbopack is the default bundler in Next.js 16. `next build` no longer runs lint, so run your linter in a pre-push or post-build step.
 - Next.js 16.3 added a better ISR path: URLs omitted from build-time prerendering can serve an instant loading shell to the first visitor. Mind the status-code caveat below.
@@ -88,8 +98,8 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
 
 For builds with many pages:
 
-- **Parallelize data fetching**: Fetch all data once at the start, not per page
-- **Memoize data access**: Use `React.cache()` or module-level caching to avoid redundant reads
+- **Fetch index-tier data once; full page data per page.** Parallelize within a page, not by loading the whole corpus
+- **Memoize data access**: `React.cache()` only dedupes within one render/request. For build-wide reuse use a module-level memoized promise, or `"use cache"`
 - **Limit build concurrency**: If the build server has limited memory, configure worker limits
 - **Incremental builds**: Use ISR to avoid rebuilding all pages on every deploy
 - **Monitor build time**: Track build duration and set alerts for regressions
@@ -97,17 +107,45 @@ For builds with many pages:
 ```typescript
 // Memoize INDEX-TIER data at module level (lightweight: slug, title, category)
 // NEVER cache full page content this way - see section 7 Memory Management
-import { cache } from "react";
+let indexPromise: Promise<PageIndex[]> | undefined;
 
-export const getAllIndexData = cache(async () => {
-  // Returns PageIndex[] (~1KB per page) - safe to hold in memory
-  return fetchAllIndexDataFromSource();
-});
+export function getAllIndexData(): Promise<PageIndex[]> {
+  // PageIndex[] (~1KB per page) - safe to hold in memory. One fetch per process.
+  indexPromise ??= fetchAllIndexDataFromSource();
+  return indexPromise;
+}
+// With Cache Components, an async function with "use cache" + cacheLife() works too.
 ```
 
 ### 3. Core Web Vitals
 
-Thresholds are measured at the 75th percentile, split by mobile and desktop. They are unchanged: LCP <= 2.5s, INP <= 200ms, CLS <= 0.1. Chrome 151 measures soft navigations (client-side route changes) by default, but how CrUX will report them is still undecided, so client navigations are not yet in CrUX or ranking data. The `web-vitals` library v6 supports soft navigations if you want to track them in RUM.
+Thresholds are assessed on field data at the 75th percentile, split by mobile and desktop. They are unchanged: LCP <= 2.5s, INP <= 200ms, CLS <= 0.1. Lab tools (Lighthouse, PageSpeed lab run) help debug but do not decide; do not set lab targets such as "3s on 3G".
+
+**Experimental soft-navigation CWV (2026-10-13):** CrUX now exposes `experimental_largest_contentful_paint_with_softnavs`, `experimental_interaction_to_next_paint_with_softnavs` and `experimental_cumulative_layout_shift_with_softnavs` per URL (BigQuery, CrUX API, CrUX History API). Stable CWV and Search Console are unchanged; Google aims to graduate them in May 2027, after which Search Console switches to them. Client navigations between template pages will then count per URL. The `web-vitals` library v6 can track soft navigations in RUM.
+
+**Measure field data per template:**
+- Search Console Core Web Vitals report: groups URLs by similar pages; use it to find which template fails.
+- CrUX API for a URL or origin (only URLs/origins with enough traffic return data; 404 means no data):
+
+```typescript
+const res = await fetch(
+  `https://chromeuxreport.googleapis.com/v1/records:queryRecord?key=${process.env.CRUX_API_KEY}`,
+  {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: "https://example.com/category/sample-page", // or { origin: "https://example.com" }
+      formFactor: "PHONE",
+      metrics: ["largest_contentful_paint", "interaction_to_next_paint", "cumulative_layout_shift"],
+    }),
+  }
+);
+const { record } = await res.json();
+const lcpP75 = record.metrics.largest_contentful_paint.percentiles.p75;
+```
+
+- CrUX History API (`https://chromeuxreport.googleapis.com/v1/records:queryHistoryRecord`, same body) returns weekly time series; use it to confirm a template fix moved the 75th percentile.
+- Sample 5-10 URLs per template; a template with no URL-level data falls back to origin data.
 
 **Largest Contentful Paint (LCP) < 2.5s:**
 - Use `next/image` or equivalent for all images (automatic sizing, WebP, lazy loading)
@@ -233,17 +271,18 @@ const ALL_DATA = await fetchAllPages(); // 500MB+ in memory for entire build
 
 ### 8. Rollout Strategy and Publication Velocity
 
-Google does not document a publication-speed signal, and Google documents no publication-speed signal and no primary source says a fast publish rate is penalized by itself. The risk is quality: Google's spam policies target many pages created mainly to rank without adding value (scaled content abuse), and a large batch of thin pages hurts the site-wide quality presumption ("individual pages (including new pages) match the overall quality of other pages on the domain"). Roll out gradually for operational reasons: you can catch template bugs, check indexing, and watch quality before committing the whole corpus. Treat the table below as operational advice, not a Google rule.
+Google documents no publication-speed signal, and no primary source says a fast publish rate is penalized by itself. The risk is quality: Google's spam policies target many pages created mainly to rank without adding value (scaled content abuse), and a large batch of thin pages hurts the site-wide quality presumption ("individual pages (including new pages) match the overall quality of other pages on the domain"). Roll out gradually for operational reasons: you can catch template bugs, check indexing, and watch quality before committing the whole corpus. Treat the table below as operational advice, not a Google rule.
 
 **Rollout strategy for new pSEO pages:**
 
 | Page Count | Rollout Strategy |
 |-----------|-----------------|
 | < 100 | Deploy all at once, low risk |
-| 100-500 | Deploy over 1-2 weeks in batches of 50-100 |
-| 500-2000 | Deploy over 2-4 weeks, monitor Search Console for issues between batches |
-| 2000-10K | Deploy over 4-8 weeks, validate indexing and ranking quality per batch |
-| 10K-100K | ISR-only (don't pre-build). Submit sitemap in category waves over 8-16 weeks. Use data sufficiency gating to exclude thin pages. See **pseo-scale** for full strategy. |
+| 100-1K | Deploy over 1-4 weeks in batches of 50-200 |
+| 1K-10K | Deploy over 4-8 weeks in batches; validate indexing and ranking quality per batch |
+| 10K+ | ISR-only (don't pre-build). Submit sitemaps in category waves. Use data sufficiency gating to exclude thin pages. See **pseo-scale** for the full strategy |
+
+These tiers are an operational heuristic, shared with pseo-scale, not a Google rule.
 
 **Implementation approaches:**
 
@@ -273,7 +312,7 @@ Google does not document a publication-speed signal, and Google documents no pub
 
 ## Performance Checklist
 
-- [ ] All pages can be reached within 3s on a 3G connection
+- [ ] Field data (CrUX / Search Console CWV report) checked per template; no template in the "poor" group
 - [ ] LCP <= 2.5s, INP <= 200ms, CLS <= 0.1 at the 75th percentile (mobile and desktop)
 - [ ] Build completes in reasonable time at current page count
 - [ ] Build peak memory stays within server limits (check with `/usr/bin/time`)
@@ -286,6 +325,10 @@ Google does not document a publication-speed signal, and Google documents no pub
 - [ ] Uncompressed HTML of the heaviest template is well under Googlebot's 2MB limit
 - [ ] "No data" pages return a real 404 before streaming starts (not 200 + noindex)
 - [ ] Search Console monitoring is configured between deployment batches
+
+## Verify
+
+Build, start the app, and run seo-regression-guard against localhost (`npx -y tsx <seo-regression-guard-dir>/scripts/seo-check.ts --site http://localhost:3000 ...`). Zero errors for touched templates, then confirm the heaviest template's uncompressed HTML size.
 
 ## Relationship to Other Skills
 

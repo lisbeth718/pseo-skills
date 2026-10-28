@@ -22,7 +22,7 @@ From Vercel's limits page (updated 2026-09-16):
 - **2,048 routes per deployment**, and `vercel.json` rewrites, redirects and headers count toward it. Use pattern-based redirects, not one rule per URL.
 - Static file upload via CLI: 100MB (Hobby) or 1GB (Pro).
 - Build cache: 1.5-4.75GB depending on machine.
-- Runtime logs are kept 1 hour (Hobby) or 1 day (Pro). Ship logs elsewhere if you need crawl analysis.
+- Runtime logs are kept 1 hour (Hobby), 1 day (Pro) or 3 days (Enterprise). Ship logs elsewhere if you need crawl analysis.
 
 ## ISR-First Architecture (Recommended for 10K+)
 
@@ -48,7 +48,7 @@ export async function generateStaticParams() {
     ? 500   // raise only if the build stays well under the 45 minute limit
     : 50;   // minimal for preview deploys
 
-  const topPages = await db.query(`
+  const { rows: topPages } = await pool.query(`
     SELECT slug, category FROM pages
     WHERE status = 'published'
     ORDER BY monthly_traffic DESC
@@ -65,10 +65,10 @@ export const dynamicParams = true; // Allow ISR for non-pre-built pages
 export const revalidate = 86400;   // 24h default, tune per page type
 ```
 
-This is the segment-config form, valid without Cache Components. With `cacheComponents: true` (default in `create-next-app` from Next.js 16.4, planned default in Next.js 17):
+This is the segment-config form, valid without Cache Components. With `cacheComponents: true` (Next.js 16.4.x, use >= 16.4.1 for the security fixes; default in `create-next-app`, planned default in Next.js 17):
 - `generateStaticParams` **must return at least one param**. An empty array is a build error. Return a placeholder param and call `notFound()` for it if you have no real seed set.
 - Cache data with `"use cache"`, `cacheLife()` and `cacheTag()` instead of `revalidate`/`unstable_cache`.
-- `export const ensureStatic = "shell"` fails the build if dynamic content sneaks into a template route.
+- `ensureStatic` (needs `cacheComponents`): only `"navigation"` adds build validation, and it requires `generateStaticParams` to return every param. With seeded params and on-demand rest, it validates nothing.
 - Check that a missing record 404s before streaming starts (before any Suspense fallback or `loading.tsx`). After streaming begins, `notFound()` yields 200 + `noindex`, which Google may treat as a soft 404.
 
 ### Preview Deploy Optimization
@@ -164,20 +164,9 @@ module.exports = {
 - Can tolerate 10-60 minute deploy lag for updates
 - Want to host on cheaper static hosting (S3, Cloudflare Pages)
 
-### Hybrid Approach
+### Limits of Static Export
 
-Static export the long-tail, dynamic for frequently-changing pages:
-
-```
-Main app (Vercel, ISR):
-  /                        # homepage
-  /[category]              # category hubs
-  /api/*                   # API routes
-  /blog/*                  # frequently updated
-
-Static subdomain (S3/Cloudflare):
-  static.example.com/[category]/[slug]  # 100K pSEO pages
-```
+Static export is a whole-site option only. It loses `proxy.ts`, ISR/on-demand revalidation, and control over 404 status codes (unknown URLs depend on the static host), so it is a poor fit for large pSEO sites that gate or remove pages. Do not split the pSEO pages onto a separate static subdomain: that fragments the site and its signals.
 
 ## Function Optimization
 
@@ -212,7 +201,7 @@ Set the function region in `vercel.json` (see Vercel's function region docs) so 
 }
 ```
 
-Or use `export const runtime = 'edge'` for pages that can run on the edge (no Node.js dependencies). Check compatibility with your Next.js version and Cache Components setting first.
+Stay on the Node.js runtime and get speed from CDN caching. Do not use edge runtime for pSEO pages: Cache Components and `proxy.ts` are Node-only.
 
 ### Reduce Cold Starts
 
@@ -287,7 +276,11 @@ Header rules in config count toward the 2,048-routes-per-deployment limit, so us
 
 ```bash
 # See what's being bundled
-ANALYZE=true next build
+# Turbopack (default): built-in analyzer, Next.js 16.1+ (verified in Next docs 2026-10-28)
+npx next analyze
+
+# Webpack plugin (@next/bundle-analyzer)
+ANALYZE=true next build --webpack
 
 # Check function sizes
 vercel inspect <deployment-url>
@@ -298,13 +291,13 @@ vercel inspect <deployment-url>
 ```typescript
 // BAD: Passing full database records to page
 export async function generateStaticParams() {
-  const allPages = await db.query('SELECT * FROM pages'); // 500KB per page
+  const { rows: allPages } = await pool.query('SELECT * FROM pages'); // 500KB per page
   return allPages;
 }
 
 // GOOD: Minimal data for static params
 export async function generateStaticParams() {
-  const slugs = await db.query('SELECT slug, category FROM pages'); // 50B per page
+  const { rows: slugs } = await pool.query('SELECT slug, category FROM pages'); // 50B per page
   return slugs;
 }
 ```
@@ -357,7 +350,6 @@ For a 100K page pSEO site with 1M monthly pageviews:
 | SSG top 1K + ISR rest | 15-30 min | $50-150 | Hourly-daily |
 | ISR-only + on-demand | 2-5 min | $30-80 | Real-time |
 | Static export + rebuild | 2-4 hours | $20-50 | Daily |
-| Hybrid (static + dynamic) | 5-10 min | $40-100 | Mixed |
 
 **Recommended for most pSEO sites**: SSG top 500-1K pages + ISR with on-demand revalidation for the rest.
 
@@ -371,7 +363,7 @@ For a 100K page pSEO site with 1M monthly pageviews:
 - [ ] Data queries are parallelized and cached
 - [ ] No large JSON imports at build time
 - [ ] Function bundle size < 1MB per route
-- [ ] Edge runtime used where possible
+- [ ] Node.js runtime with CDN caching (no edge runtime)
 - [ ] Page caching controlled via revalidate/cacheLife; custom Cache-Control only on route handlers
 - [ ] Database connections are pooled
 - [ ] Build analytics tracked in CI

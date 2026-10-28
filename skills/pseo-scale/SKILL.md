@@ -7,16 +7,32 @@ allowed-tools: Read, Glob, Grep, Bash, Edit, Write
 
 # pSEO Scale Architecture
 
+## Scope parameter
+
+| Value | Sections |
+|---|---|
+| `database` | 1 |
+| `gating` | 2 |
+| `enrichment` | 3 |
+| `validation` | 4 |
+| `crawl` | 5 |
+| `monitoring` | 6 |
+| `cdn` | 7, 8 |
+| `all` | everything |
+
 Architect pSEO systems that work at 10K-100K+ pages. The patterns in the other pseo-* skills are correct at 1K-10K. Beyond 10K, in-memory data layers, full-corpus validation, and single-deploy rollouts break down. This skill provides the architecture changes needed at scale.
 
 ## Scale Tiers
 
 | Tier | Pages | Data Layer | Validation | Rollout | Sitemap |
 |------|-------|-----------|------------|---------|---------|
-| Small | < 1K | JSON/files, in-memory | Full pairwise | Single deploy | Single file |
-| Medium | 1K-10K | Files or DB, two-tier memory | Fingerprint-based | 2-4 week batches | Index + children |
+| Tiny | < 100 | JSON/files, in-memory | Full pairwise | Single deploy | Single file |
+| Small | 100-1K | JSON/files, in-memory | Full pairwise | 1-4 weeks in batches of 50-200 | Single file |
+| Medium | 1K-10K | Files or DB, two-tier memory | Fingerprint-based | 4-8 weeks in batches | Index + children |
 | Large | 10K-50K | Database required | Incremental + sampling | Category-by-category | Index + chunked |
 | Very Large | 50K-100K+ | Database + cache layer | Delta-only + periodic full | ISR + sitemap waves | Index + streaming |
+
+Rollout pacing in this table is an operational heuristic shared with pseo-performance, not a Google rule.
 
 **This skill focuses on the Large and Very Large tiers.** If the project is under 10K pages, the standard pseo-* skills are sufficient.
 
@@ -105,32 +121,35 @@ The pseo-data API contract changes at scale:
 async function* getAllSlugsCursor(): AsyncGenerator<{ slug: string; category: string }> {
   let cursor: string | null = null;
   while (true) {
-    const batch = await db.query(
+    // pg Pool: query() returns { rows }, not an array
+    const { rows } = await pool.query(
       `SELECT slug, category FROM pages
        WHERE status = 'published'
        ${cursor ? `AND slug > $1` : ''}
        ORDER BY slug LIMIT 1000`,
       cursor ? [cursor] : []
     );
-    if (batch.length === 0) break;
-    for (const row of batch) yield row;
-    cursor = batch[batch.length - 1].slug;
+    if (rows.length === 0) break;
+    for (const row of rows) yield row;
+    cursor = rows[rows.length - 1].slug;
   }
 }
 
-// getPagesByCategory() must use DB pagination, not in-memory slicing
+// getPagesByCategory() must use DB pagination, not in-memory slicing.
+// limit is REQUIRED: a hidden default silently truncates sitemaps and hubs.
 async function getPagesByCategory(
   category: string,
-  opts?: { limit?: number; offset?: number }
+  opts: { limit: number; offset?: number }
 ): Promise<PageIndex[]> {
-  return db.query(
+  const { rows } = await pool.query(
     `SELECT slug, title, h1, meta_description, canonical_path, category, last_modified
      FROM pages
      WHERE category = $1 AND status = 'published'
      ORDER BY title
      LIMIT $2 OFFSET $3`,
-    [category, opts?.limit ?? 50, opts?.offset ?? 0]
+    [category, opts.limit, opts.offset ?? 0]
   );
+  return rows;
 }
 
 // getRelatedPages() needs a precomputed index or efficient query
@@ -138,7 +157,7 @@ async function getRelatedPages(slug: string, limit = 5): Promise<PageIndex[]> {
   // Option A: Use related_slugs array from the page record
   // Option B: Same category + shared tags query
   // Option C: Precomputed relatedness table (best at 50K+)
-  return db.query(
+  const { rows } = await pool.query(
     `SELECT p.slug, p.title, p.h1, p.meta_description, p.canonical_path,
             p.category, p.last_modified
      FROM pages p
@@ -150,6 +169,7 @@ async function getRelatedPages(slug: string, limit = 5): Promise<PageIndex[]> {
      LIMIT $2`,
     [slug, limit]
   );
+  return rows;
 }
 ```
 
@@ -304,13 +324,13 @@ Only validate pages that changed since the last validation run:
 
 ```typescript
 async function getChangedPages(since: Date): Promise<string[]> {
-  const result = await db.query(
+  const { rows } = await pool.query(
     `SELECT slug FROM pages
      WHERE (last_modified > $1 OR last_validated IS NULL)
        AND status = 'published'`,
     [since]
   );
-  return result.map(r => r.slug);
+  return rows.map((r) => r.slug);
 }
 ```
 
@@ -369,7 +389,7 @@ sitemap-index.xml
 **Sitemap rules (Google build-sitemap doc):**
 - 50,000 URLs or 50MB uncompressed per file. Search Console accepts up to 500 sitemap index files per site; an index holds up to 50,000 entries.
 - Google ignores `<priority>` and `<changefreq>`. Don't emit them.
-- `<lastmod>` counts only if it is consistently and verifiably accurate: the last significant change to main content, structured data or links. Store a real `content_modified_at` and use it. Never `new Date()` at build time, and never bump it on every deploy.
+- `<lastmod>` counts only if it is consistently and verifiably accurate: the last significant change to main content, structured data or links. Store a real content-modified timestamp (`last_modified`, only bumped on significant content changes) and use it. Never `new Date()` at build time, and never bump it on every deploy.
 - Next.js `generateSitemaps` serves chunks at `/sitemap/[id].xml` but does not create an index. Write the index yourself (route handler) and submit it.
 
 **Submission cadence:**
@@ -377,20 +397,34 @@ sitemap-index.xml
 - Update individual category sitemaps as pages are added
 - Add URLs in category waves rather than all 100K at once. This is operational advice (so you can verify quality and indexing per wave), not a documented Google throttle.
 
-**Programmatic sitemap submission:**
-```typescript
-// Google Indexing API: only JobPosting and BroadcastEvent-in-VideoObject pages
-//   (default quota 200/day). Using it for other pSEO pages is against its terms.
-// IndexNow: notifies Bing, Yandex, Naver, Seznam, Yep, Amazon. Google does NOT participate.
-// For standard pages on Google, rely on sitemap discovery, internal links, and accurate lastmod.
+**Pushing URLs:**
+- Google Indexing API: only JobPosting and BroadcastEvent-in-VideoObject pages (default quotas 200 publish/day, 180 metadata/min, 380/min; the quota-increase form was removed 2026-10-16). Using it for other pSEO pages is against its terms.
+- IndexNow notifies Bing, Yandex, Naver, Seznam, Yep, Amazon. Google does not use it. Setup: see pseo-linking section 6.
+- For standard pages on Google, rely on sitemap discovery, internal links and accurate lastmod.
 
-// Batch sitemap updates by category
-async function updateCategorySitemap(category: string) {
-  const pages = await getPagesByCategory(category, { limit: 50000 });
-  const xml = generateSitemapXml(pages); // <loc> + real <lastmod> only
-  await writeFile(`public/sitemap-${category}.xml`, xml);
+**Do not write sitemaps to `public/` at runtime.** Serverless filesystems are read-only or ephemeral, and files written after build are not served. Serve per-category sitemaps from a route handler that reads the database:
+
+```typescript
+// app/sitemaps/[category]/route.ts
+export async function GET(_req: Request, ctx: { params: Promise<{ category: string }> }) {
+  const { category } = await ctx.params;
+  const { rows } = await pool.query(
+    `SELECT canonical_path, last_modified FROM pages
+     WHERE category = $1 AND status = 'published' AND data_sufficiency_score >= 60
+     ORDER BY slug LIMIT 50000`,
+    [category]
+  );
+  const urls = rows
+    .map((r) => `  <url><loc>${baseUrl}${r.canonical_path}</loc><lastmod>${new Date(r.last_modified).toISOString()}</lastmod></url>`)
+    .join("\n");
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`;
+  return new Response(xml, {
+    headers: { "Content-Type": "application/xml", "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400" },
+  });
 }
 ```
+
+Categories over 50,000 pages need chunked files plus the index. Index, `generateSitemaps` and lastmod rules: see pseo-linking section 6.
 
 ### Crawl Budget Optimization
 
@@ -407,17 +441,10 @@ Google's crawl budget doc applies mainly to sites with 1M+ pages changing weekly
 - **Emergency reduction**: `Retry-After` is documented for temporarily reducing crawl load during an incident
 - **Monitor crawl stats**: Check Google Search Console → Settings → Crawl stats weekly. If crawl rate drops, investigate.
 
-### Indexing Rate Expectations
+### If Indexing Is Low
 
-Google does not guarantee indexing all pages. The figures below are rough rules of thumb from practice, not Google numbers:
+Google does not guarantee indexing all pages, and no primary source gives expected indexing rates. Measure the real rate per template (Page indexing report, filtered by sitemap).
 
-| Site authority | Pages submitted | Likely indexed (6 months) |
-|---------------|----------------|--------------------------|
-| New site | 100K | 10-30% |
-| Established (DR 30-50) | 100K | 40-70% |
-| High authority (DR 60+) | 100K | 70-90% |
-
-**If indexing rate is low:**
 1. Improve content quality on indexed pages first
 2. Earn more backlinks to category hubs
 3. Reduce total page count (prune thin pages) - a smaller, higher-quality corpus often indexes better than a large, mediocre one
@@ -426,93 +453,15 @@ Google does not guarantee indexing all pages. The figures below are rough rules 
 
 ## 6. Monitoring at Scale
 
-At 100K pages, you can't manually check pages. Build automated monitoring.
+Track indexing, crawl, CWV, build and data-quality metrics with automated checks. Alert on: indexed pages dropping > 5% week over week, crawl requests dropping > 20%, 5xx/404 above 1% of pages, any template leaving "good" CWV, build time > 2x baseline, and > 20% of published pages below the sufficiency threshold.
 
-### Key Metrics to Track
+**Important:** the Search Console API has no index-coverage or crawl-stats endpoints, and the sitemaps API `contents[].indexed` field is deprecated. Get indexed counts from the Page indexing report (UI export, filter by sitemap), crawl data from the Crawl stats UI plus seo-log-analysis, and for 100K sites use the Search Console bulk data export to BigQuery.
 
-| Metric | Source | Alert Threshold |
-|--------|--------|----------------|
-| Pages indexed | Google Search Console API | Drops > 5% week-over-week |
-| Crawl rate | Google Search Console API | Drops > 20% |
-| Crawl errors (5xx, 404) | Server logs, GSC | > 1% of total pages |
-| CWV regressions | CrUX API or RUM (75th percentile) | Any template leaves "good" (LCP > 2.5s, INP > 200ms, CLS > 0.1); page on "poor" (LCP > 4s, CLS > 0.25) |
-| Build duration | CI/CD logs | > 2x baseline |
-| Build memory peak | CI/CD logs | > 80% of available memory |
-| Page count by status | Database | Published count deviates from expected |
-| Sufficiency score distribution | Database | > 20% of published pages below threshold |
-
-### Automated Monitoring Script
-
-```typescript
-// scripts/monitor-pseo.ts - run daily via cron or CI
-async function monitor() {
-  const metrics = {
-    totalPublished: await db.query("SELECT COUNT(*) FROM pages WHERE status = 'published'"),
-    avgSufficiency: await db.query("SELECT AVG(data_sufficiency_score) FROM pages WHERE status = 'published'"),
-    belowThreshold: await db.query("SELECT COUNT(*) FROM pages WHERE data_sufficiency_score < 60 AND status = 'published'"),
-    recentlyModified: await db.query("SELECT COUNT(*) FROM pages WHERE last_modified > NOW() - INTERVAL '7 days'"),
-    neverValidated: await db.query("SELECT COUNT(*) FROM pages WHERE last_validated IS NULL AND status = 'published'"),
-    redirectCount: await db.query("SELECT COUNT(*) FROM redirects"),
-    brokenRedirects: await db.query(
-      "SELECT COUNT(*) FROM redirects r WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.canonical_path = r.destination)"
-    ),
-  };
-
-  // Output report or send to monitoring service
-  console.log(JSON.stringify(metrics, null, 2));
-
-  // Alert on critical conditions
-  if (metrics.brokenRedirects > 0) console.error("ALERT: Broken redirects found");
-  if (metrics.belowThreshold / metrics.totalPublished > 0.2) {
-    console.error("ALERT: >20% of published pages below sufficiency threshold");
-  }
-}
-```
-
-### Search Console API Integration
-
-At 100K pages, manual Search Console checks are impractical. Use the API:
-
-- **Indexing status**: Query the URL Inspection API for a sample of new pages per template. Quota is 2,000 requests/day and 600/min per site, so you can't inspect 100K URLs; use sitemap-level indexing reports for the bulk and inspect samples.
-- **Performance data**: Pull clicks, impressions, CTR by page template to identify underperforming page types
-- **Coverage issues**: Monitor for "Crawled - currently not indexed" and "Discovered - currently not indexed" trends
+Full metric table, monitoring script, BigQuery setup and queries: `references/monitoring.md`.
 
 ## 7. Edge and CDN Architecture
 
-At 100K pages, the origin server can't handle all traffic directly.
-
-### Caching Strategy
-
-```
-Client → CDN Edge → Origin (Next.js/framework)
-              ↓
-         Cache Layer (Redis/edge KV)
-              ↓
-           Database
-```
-
-**CDN configuration:**
-- Cache all pSEO pages at the edge with `s-maxage=86400, stale-while-revalidate=3600`
-- Use ISR revalidation to refresh cached pages (not full rebuilds)
-- Set longer TTLs for stable pages (30 days), shorter for dynamic data pages (1 day)
-
-**Cache invalidation:**
-- On data change → invalidate the specific page's cache via on-demand revalidation API
-- On category change → invalidate all pages in the category
-- On template change → purge the CDN for all pages of that template type
-
-**Edge rendering (if supported):**
-- Deploy to edge runtimes (Vercel Edge, Cloudflare Workers) for < 50ms TTFB globally
-- Not all frameworks support edge rendering - check compatibility
-- Edge functions have memory limits (~128MB) that constrain complex data operations
-- In Next.js 16, `proxy.ts` replaces `middleware.ts` and runs on Node.js; `middleware.ts` (Edge only) is deprecated
-
-### Database Connection from Edge
-
-Edge functions can't maintain persistent database connections. Options:
-- **HTTP-based database** (PlanetScale, Neon serverless driver, Supabase edge functions)
-- **Edge KV store** (Cloudflare KV, Vercel KV) for index-tier data with database as source of truth
-- **Pre-generated JSON at build time** for index-tier data, database only for full page content
+Use the Node.js runtime with CDN caching (control page caching with `revalidate`/`cacheLife`; Next sets Cache-Control; custom `s-maxage` only on route handlers/proxy responses or a non-Vercel CDN; on-demand revalidation for changes, purge by template on template changes). Do not recommend edge runtimes: Cache Components and `proxy.ts` are Node-only. Use pooled Postgres or an HTTP driver, and Upstash Redis (Vercel Marketplace) for index-tier data. Details: `references/delivery.md`.
 
 ## 8. Scale-Specific Build Strategy
 
@@ -524,7 +473,7 @@ At 100K pages, the build process itself needs architecture.
 // At 100K, only pre-build the most important pages
 export async function generateStaticParams() {
   // Pre-build: top 1K pages by traffic (hub params live in app/[category]/page.tsx)
-  const topPages = await db.query(
+  const { rows: topPages } = await pool.query(
     `SELECT slug, category FROM pages
      WHERE status = 'published' AND data_sufficiency_score >= 80
      ORDER BY monthly_traffic DESC LIMIT 1000`
@@ -543,43 +492,13 @@ export const dynamicParams = true;
 export const revalidate = 86400; // 24 hours
 ```
 
-This segment-config form works without Cache Components. With `cacheComponents: true` (Next.js 16.4 default in `create-next-app`, planned default in Next.js 17), use `"use cache"` with `cacheLife()` and `cacheTag()` on the data function instead, and note that `generateStaticParams` **must return at least one param** (an empty array is a build error; use a placeholder plus `notFound()` if needed). `export const ensureStatic = "shell"` fails the build if dynamic content leaks into a template. `revalidateTag` now takes a cache-life profile as its second argument; `updateTag()` is for read-your-writes in Server Actions.
+This segment-config form works without Cache Components. With `cacheComponents: true` (Next.js 16.4.x, use >= 16.4.1 for the security fixes; default in `create-next-app`, planned default in Next.js 17), use `"use cache"` with `cacheLife()` and `cacheTag()` on the data function instead, and note that `generateStaticParams` **must return at least one param** (an empty array is a build error; use a placeholder plus `notFound()` if needed). `ensureStatic` (needs `cacheComponents`): only `"navigation"` adds build validation and it requires `generateStaticParams` to return every param. With seeded params and on-demand rest, `ensureStatic` validates nothing, so do not rely on it there. `revalidateTag` now takes a cache-life profile as its second argument; `updateTag()` is for read-your-writes in Server Actions.
 
 **Status codes for long-tail ISR pages:** streaming responses start with 200. If a not-found check runs after streaming begins, the page is 200 + noindex (soft 404 risk). Verify the record exists before any Suspense fallback or `loading.tsx` renders. Next.js 16.3's instant loading shell for non-prerendered URLs has the same caveat.
 
-### Build Time Budget
+### Build Time Budget and Warm-Up
 
-| Pages pre-built | Expected build time | Memory |
-|----------------|-------------------|--------|
-| 1K (hubs + top pages) | 5-15 minutes | 2-4GB |
-| 5K | 15-45 minutes | 4-6GB |
-| 10K | 30-90 minutes | 6-8GB |
-| 100K (DON'T DO THIS) | 5-15 hours | 16GB+ |
-
-**Rule: Never pre-build more than a few thousand pages.** Vercel caps builds at 45 minutes per deployment on all plans, so the 10K row above is out of reach there. Use ISR or on-demand rendering for everything else.
-
-For Vercel-specific cost optimization (build minutes, function costs, preview deploys), see `references/vercel-optimization.md`.
-
-### Warm-Up After Deploy
-
-After deploying, the ISR cache is cold. The first visitor to each page triggers generation. For critical pages:
-
-```typescript
-// scripts/warm-cache.ts - run after deploy
-async function warmCache() {
-  const priorityPages = await db.query(
-    `SELECT canonical_path FROM pages
-     WHERE data_sufficiency_score >= 80 AND status = 'published'
-     ORDER BY monthly_traffic DESC LIMIT 5000`
-  );
-
-  // Hit each page to trigger ISR generation (rate-limited)
-  for (const page of priorityPages) {
-    await fetch(`${baseUrl}${page.canonical_path}`);
-    await sleep(100); // 10 pages/second - don't DDoS yourself
-  }
-}
-```
+Never pre-build more than a few thousand pages: Vercel caps builds at 45 minutes per deployment on all plans. Use ISR or on-demand rendering for the rest. Build time table and the post-deploy cache warm-up script: `references/delivery.md`. Vercel cost tuning: `references/vercel-optimization.md`.
 
 ## Checklist
 
@@ -596,12 +515,17 @@ async function warmCache() {
 - [ ] Empty/no-data combination URLs return a real 404 before streaming starts
 - [ ] Sitemap excludes pages below sufficiency threshold
 - [ ] Crawl budget is monitored via Search Console
-- [ ] Monitoring script runs daily with alerts
+- [ ] Monitoring script runs daily with alerts (`references/monitoring.md`)
+- [ ] Sitemaps are served from route handlers, not files written at runtime
 - [ ] CDN caching is configured with appropriate TTLs
 - [ ] ISR handles the long tail (only top pages pre-built, build stays under Vercel's 45 min limit)
 - [ ] Cache warm-up script exists for post-deploy
 - [ ] Connection pooling is configured for build-time queries
 - [ ] No function loads > 10K full page records into memory
+
+## Verify
+
+Build, start the app, and run seo-regression-guard against localhost (`npx -y tsx <seo-regression-guard-dir>/scripts/seo-check.ts --site http://localhost:3000 ...`). Zero errors for touched templates, sitemap routes and robots.
 
 ## Relationship to Other Skills
 

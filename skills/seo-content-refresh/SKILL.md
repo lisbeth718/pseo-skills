@@ -7,16 +7,27 @@ allowed-tools: Read, Bash, Glob, Grep, Write, WebSearch
 
 # SEO Content Refresh and Pruning
 
+## Scope parameter
+
+The `argument-hint` action values map to sections:
+- `classify`: Inputs, Classes, Classifier sketch
+- `decide`: Decision table, Action detail, Seasonality and update correlation, pSEO: act on segments
+- `plan-redirects`: the Consolidate + 301 item in Action detail, and Safety rules
+
 Classify every indexed page by its performance trend, then pick one action per class. Decide from data, not from page age.
 
 ## Inputs
 
 1. **GSC export, two periods**: two `pull.ts` runs from `gsc`, one per period, each with full page coverage. Use last 90d vs previous 90d, or last 90d vs the same 90d a year ago when seasonality matters. GSC keeps 16 months of data, so pull and archive monthly.
 
+   `<gsc-skill-dir>` is the `gsc` skill folder (e.g. `.claude/skills/gsc`); run `npm --prefix <gsc-skill-dir>/scripts install` once first.
+
    ```bash
-   npx tsx <skill-dir>/scripts/pull.ts --site sc-domain:example.com --start 2026-07-01 --end 2026-09-28 --pages 25000 --out data/gsc-current.json
-   npx tsx <skill-dir>/scripts/pull.ts --site sc-domain:example.com --start 2026-04-02 --end 2026-06-30 --pages 25000 --out data/gsc-previous.json
+   <gsc-skill-dir>/scripts/node_modules/.bin/tsx <gsc-skill-dir>/scripts/pull.ts --site sc-domain:example.com --start 2026-07-01 --end 2026-09-28 --pages 1000000 --out data/gsc-current.json
+   <gsc-skill-dir>/scripts/node_modules/.bin/tsx <gsc-skill-dir>/scripts/pull.ts --site sc-domain:example.com --start 2026-04-02 --end 2026-06-30 --pages 1000000 --out data/gsc-previous.json
    ```
+
+   The Search Analytics API returns at most 50K rows per day per search type (sorted by clicks), so on big sites a page-level pull can miss low-impression URLs. For large sites use the Search Console bulk data export to BigQuery instead (see `gsc`, action `bulk-export`): it holds every page with impressions, and template-level aggregation is one SQL query.
 
    Cannibalization needs query+page rows: add `--dims query,page` to a run and read the `queryPages` array.
 2. **Page inventory**: URL, template/segment, publish date, real last content change (from git or CMS, not the sitemap), canonical, indexability.
@@ -71,7 +82,7 @@ Before calling anything "decaying":
 2. Overlay the drop onto update windows. A drop that starts inside a rollout window and hits a whole template or section points at a ranking change, not a single bad page. Google says rollouts can take up to 2-3 weeks, so allow the full window.
 3. Wait for the rollout to end before acting. Google's guidance is to assess after completion, and it ships smaller unannounced core updates continuously, so recovery does not need a named update.
 
-Known windows (source: `docs/research-2026-10.md`, from the Search Status Dashboard):
+Known windows (source: [research doc](https://github.com/lisbeth718/pseo-skills/blob/main/docs/research-2026-10.md), from the Search Status Dashboard):
 
 | Update | Start | End |
 |---|---|---|
@@ -100,7 +111,7 @@ For programmatic pages, aggregate the classes by template and segment (e.g. `/jo
 
 ## Classifier sketch
 
-Reads the `pages` array of two `pull.ts` exports (`--pages 25000` so a missing page really has no impressions), plus an optional inventory file, and writes `data/content-classes.csv`. Run from the project root with `npx tsx classify.ts data/gsc-current.json data/gsc-previous.json [data/inventory.json]`.
+Reads the `pages` array of two `pull.ts` exports (`--pages 1000000` for the fullest page coverage; on big sites a missing page can be an API row-cap gap, so confirm with BigQuery or URL Inspection), plus an optional inventory file, and writes `data/content-classes.csv`. Run from the project root with `npx tsx classify.ts data/gsc-current.json data/gsc-previous.json [data/inventory.json]`.
 
 ```ts
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

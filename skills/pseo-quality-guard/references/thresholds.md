@@ -110,7 +110,7 @@ These numbers are this toolkit's heuristics. Google publishes no numeric thresho
 - **Warning**: Should fix before launch, but not blocking.
   - Near-duplicate content (60-80% similarity)
   - Titles outside target length range
-  - Pages with < 3 inbound links
+  - Pages with < 2 inbound links (minimum; target 5+)
   - Missing schema markup
 
 - **Info**: Best practice recommendations.

@@ -1,15 +1,29 @@
 ---
 name: seo-log-analysis
 description: Analyze server and CDN access logs for search and AI crawler behavior. Use when diagnosing crawl waste, pages that are never crawled or indexed, slow Googlebot responses, how long new pages take to get a first crawl, or how much traffic AI bots take. Covers log formats, bot verification, metrics, and a duckdb pipeline.
-argument-hint: "[log path or source | metric: volume | status | waste | orphans | ttfc | latency | ai]"
-allowed-tools: Read, Glob, Grep, Bash, WebFetch
+argument-hint: "[log path or source | metric: volume | status | waste | orphans | ttfc | latency | ai | ai-referral]"
+allowed-tools: Read, Glob, Grep, Bash, Write, WebFetch
 ---
 
 # SEO Log Analysis
 
 Logs are the only first-party record of what crawlers actually fetch. Search Console shows samples; logs show everything. Use them to turn "Discovered - currently not indexed" into a specific cause and action.
 
-Read-only skill: it produces findings and recommended changes, it does not edit config.
+Analysis skill: it produces findings and recommended changes. It writes only scratch scripts, SQL and report files (use a scratch or reports directory), never app code or server config.
+
+## Scope parameter
+
+| Value | Sections |
+|---|---|
+| log path or source | 1, 2, 3 (get, normalize, verify) |
+| `volume` | 4 (Crawl volume) |
+| `status` | 4 (Status code mix, non-canonical URLs) |
+| `waste` | 4 (Crawl waste), 5 |
+| `orphans` | 4 (Orphans) |
+| `ttfc` | 4 (Time to first crawl) |
+| `latency` | 4 (Response time to Googlebot) |
+| `ai` | 4 (AI bot share) |
+| `ai-referral` | 4 (AI referral traffic) |
 
 ## 1. Get the logs
 
@@ -18,8 +32,8 @@ Read-only skill: it produces findings and recommended changes, it does not edit 
 | nginx | `access_log` with the `seo` JSON format below | `$request_time` is total time, not TTFB; for TTFB use `$upstream_header_time` (origin) |
 | Caddy | `log { format json }` | Fields: `request.uri`, `request.remote_ip`, `request.headers["User-Agent"]`, `status`, `duration` (seconds), `size` |
 | Traefik | `accessLog: { format: json, fields: { headers: { defaultMode: keep } } }` | Fields: `RequestPath`, `ClientHost`, `DownstreamStatus`, `Duration` (nanoseconds), `request_User-Agent` |
-| Cloudflare | Logpush `http_requests` dataset to R2/S3 (NDJSON). Enterprise plans only; other plans need a Worker or origin logs | `ClientRequestURI`, `ClientIP`, `ClientRequestUserAgent`, `EdgeResponseStatus`, `EdgeTimeToFirstByteMs`, `CacheCacheStatus`, `VerifiedBotCategory`. Edge logs include cache hits, origin logs do not |
-| Vercel | Log Drain (HTTP/Datadog/etc.) | Runtime logs are kept only 1h (Hobby) or 1 day (Pro), so a drain is the only way to get history. Request entries carry a `proxy` object: `proxy.path` (with query), `proxy.statusCode`, `proxy.userAgent` (an array, take element 0), `proxy.clientIp`, `proxy.method`, `proxy.vercelCache`, `proxy.responseByteSize`; top-level `timestamp` is epoch ms. Filter to entries with `proxy` set (checked 2026-10-12 against vercel.com/docs/drains/reference/logs; re-check before relying on it) |
+| Cloudflare | Logpush `http_requests` dataset to R2/S3 (NDJSON). All plans since 2026-09-30 (usage-based, 25 GB/month included); field availability depends on plan; 4 jobs per zone; no backfill | `ClientRequestURI`, `ClientIP`, `ClientRequestUserAgent`, `EdgeResponseStatus`, `EdgeTimeToFirstByteMs`, `CacheCacheStatus`, `VerifiedBotCategory`. Edge logs include cache hits, origin logs do not |
+| Vercel | Log Drain (HTTP/Datadog/etc.) | Runtime logs are kept only 1h (Hobby), 1 day (Pro) or 3 days (Enterprise), so a drain is the only way to get history. Request entries carry a `proxy` object: `proxy.path` (with query), `proxy.statusCode`, `proxy.userAgent` (an array, take element 0), `proxy.clientIp`, `proxy.method`, `proxy.vercelCache`, `proxy.responseByteSize`; top-level `timestamp` is epoch ms. Filter to entries with `proxy` set (checked 2026-10-12 against vercel.com/docs/drains/reference/logs; re-check before relying on it) |
 
 If the origin sits behind a CDN, analyze **edge** logs for crawl volume and **origin** logs for response time. Real client IP must come from the CDN header, never from the proxy hop.
 
@@ -59,7 +73,9 @@ SELECT
   CAST(status AS INT) AS status,
   try_cast(ttfb_s AS DOUBLE) * 1000 AS ttfb_ms,
   try_cast(duration_s AS DOUBLE) * 1000 AS duration_ms,
-  http_user_agent AS ua
+  try_cast(bytes AS BIGINT) AS bytes,
+  http_user_agent AS ua,
+  referer
 FROM read_json_auto('logs/*.json', format='newline_delimited', ignore_errors=true);
 ```
 
@@ -203,6 +219,35 @@ GROUP BY 1 ORDER BY hits DESC LIMIT 25;
 
 **AI bot share.** Group verified AI hits by purpose: training (GPTBot, ClaudeBot, CCBot, meta-externalagent, Bytespider), search (OAI-SearchBot, Claude-SearchBot, PerplexityBot, meta-webindexer), user fetch (ChatGPT-User, Claude-User, Perplexity-User, Google-Agent, meta-externalfetcher). Report each as a share of total requests and of bytes. Search and user-fetch bots are the ones that can lead to citations; training bots give no referral. Note: user-fetch bots may ignore robots.txt, so a disallow does not stop them.
 
+**AI referral traffic.** Humans who click a citation in an AI answer arrive with the assistant's site as `referer`. This is real visitor traffic, not crawling, so query `hits` (not `bot_hits`) and exclude bot UAs. The host list is illustrative, not complete; extend it from what your referer column actually contains. Some assistants send no referer, so treat the result as a floor.
+
+```sql
+CREATE TABLE ai_referrals AS
+SELECT *, CASE
+    WHEN referer ILIKE '%chatgpt.com%' OR referer ILIKE '%chat.openai.com%' THEN 'chatgpt'
+    WHEN referer ILIKE '%perplexity.ai%' THEN 'perplexity'
+    WHEN referer ILIKE '%claude.ai%' THEN 'claude'
+    WHEN referer ILIKE '%gemini.google.com%' THEN 'gemini'
+    WHEN referer ILIKE '%copilot.microsoft.com%' OR referer ILIKE '%bing.com/chat%' THEN 'copilot'
+  END AS ai_source,
+  CASE
+    WHEN path = '/' THEN 'home'
+    WHEN path LIKE '/city/%' THEN 'city'
+    WHEN path LIKE '/blog/%' THEN 'blog'
+    ELSE 'other'
+  END AS template
+FROM hits
+WHERE status = 200 AND ua NOT ILIKE '%bot%' AND referer IS NOT NULL;
+
+DELETE FROM ai_referrals WHERE ai_source IS NULL;
+
+-- by landing page, then by template
+SELECT path, ai_source, count(*) visits FROM ai_referrals GROUP BY 1,2 ORDER BY visits DESC LIMIT 25;
+SELECT template, ai_source, count(*) visits FROM ai_referrals GROUP BY 1,2 ORDER BY visits DESC;
+```
+
+Compare landing pages against the AI search/user-fetch bot hits above: pages cited but never fetched by a search bot point to cached or third-party sources. On Vercel, the Observability AI Traffic view (2026-10-28) shows verified AI bot traffic (not human referrals) without a log drain (`vercel metrics` CLI needs Observability Plus).
+
 ## 5. Findings to actions
 
 | Finding | Action |
@@ -228,7 +273,7 @@ Crawl-budget framing applies mainly to sites with 1M+ pages changing weekly, 10k
 4. Waste breakdown with top patterns.
 5. Orphan count by template.
 6. TTFC and latency p50/p95 by template.
-7. AI bot table by purpose.
+7. AI bot table by purpose, plus AI referral visits by landing page and template.
 8. Ranked actions, each with the evidence query and the expected metric to move.
 
 Re-run after each change; allow days to weeks for Googlebot to shift (robots.txt is cached up to 24h; duplicate clusters can persist up to 2 weeks).

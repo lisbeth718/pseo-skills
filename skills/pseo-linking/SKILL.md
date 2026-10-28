@@ -1,11 +1,24 @@
 ---
 name: pseo-linking
 description: Build an intelligent internal linking system using hub-and-spoke structures, related page suggestions, breadcrumb navigation, and topical clustering for programmatic SEO. Use when implementing or improving internal linking, adding breadcrumbs, building category hub pages, or creating related-pages components.
-argument-hint: "[component: all | breadcrumbs | related | hubs | sitemap]"
+argument-hint: "[component: all | breadcrumbs | related | hubs | sitemap | redirects | robots | facets]"
 allowed-tools: Read, Glob, Grep, Bash, Edit, Write
 ---
 
 # pSEO Internal Linking
+
+## Scope parameter
+
+| Value | Sections |
+|---|---|
+| `breadcrumbs` | 1 |
+| `related` | 2, 4 |
+| `hubs` | 3, 5 |
+| `sitemap` | 6 (including pushing URLs) |
+| `facets` | 6, "Faceted Navigation, Empty Combinations and Internal Search" |
+| `redirects` | 7 |
+| `robots` | 8, 9 |
+| `all` | everything |
 
 Build an internal linking system that creates strong topical authority, distributes link equity, and ensures every page is discoverable.
 
@@ -112,7 +125,7 @@ Generate a dynamic sitemap that:
 
 **What Google reads (build-sitemap doc, updated 2026-07):**
 - `<changefreq>` and `<priority>` are ignored. Do not generate them.
-- `<lastmod>` is used only if it is consistently and verifiably accurate. Set it to the last significant update (main content, structured data, links), not the build time and not `new Date()`. Store a real `content_modified_at` per page and use that. If you can't supply a truthful date, omit `lastmod`.
+- `<lastmod>` is used only if it is consistently and verifiably accurate. Set it to the last significant update (main content, structured data, links), not the build time and not `new Date()`. Store a real content-modified timestamp per page (`lastModified` on `PageIndex`, see pseo-data) and use that. If you can't supply a truthful date, omit `lastmod`.
 
 ```typescript
 // app/sitemap.ts (Next.js App Router, up to ~50,000 URLs)
@@ -125,16 +138,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   for (const cat of categories) {
     entries.push({
       url: `${baseUrl}/${cat.slug}`,
-      lastModified: cat.contentModifiedAt, // real content timestamp, never new Date()
+      lastModified: cat.lastModified, // real content timestamp, never new Date()
     });
 
-    const pages = await getPagesByCategory(cat.slug);
-    for (const page of pages) {
-      entries.push({
-        url: `${baseUrl}/${cat.slug}/${page.slug}`,
-        lastModified: page.contentModifiedAt,
-      });
-    }
+    // Iterate ALL pages with a cursor. Do not call a list function with a default limit.
+    let cursor: string | null = null;
+    do {
+      const batch = await getPagesCursor(cat.slug, cursor, 5000); // { items: PageIndex[], next: string | null }
+      for (const page of batch.items) {
+        entries.push({
+          url: `${baseUrl}${page.canonicalPath}`,
+          lastModified: page.lastModified, // PageIndex field (see pseo-data); a real content timestamp
+        });
+      }
+      cursor = batch.next;
+    } while (cursor);
   }
 
   return entries;
@@ -161,7 +179,7 @@ export default async function sitemap(props: {
   const pages = await getPublishedPagesChunk(id * CHUNK, CHUNK);
   return pages.map((p) => ({
     url: `${baseUrl}${p.canonicalPath}`,
-    lastModified: p.contentModifiedAt,
+    lastModified: p.lastModified,
   }));
 }
 ```
@@ -186,16 +204,44 @@ ${items}
 Reference the index in robots.txt (`Sitemap: https://example.com/sitemap-index.xml`) and submit it in Search Console.
 
 **Pushing URLs to search engines:**
-- IndexNow notifies Bing, Yandex, Naver, Seznam, Yep and Amazon. Google does not participate, so it does not speed up Google indexing.
-- Google's Indexing API is only for JobPosting and BroadcastEvent-in-VideoObject pages (default quota 200/day). Using it for other pSEO pages is against its terms and can lose you API access.
+- IndexNow notifies Bing, Yandex, Naver, Seznam, Yep and Amazon. Google does not use IndexNow, so it does not speed up Google indexing.
+- Bing: also submit the sitemap index in Bing Webmaster Tools (IndexNow is additive, not a replacement).
+- Google's Indexing API is only for JobPosting and BroadcastEvent-in-VideoObject pages. Default quotas: 200 publish requests/day (URL_UPDATED plus URL_DELETED), 180 metadata requests/min, 380 requests/min total. The old quota-increase form was removed on 2026-10-16. Using it for other pSEO pages is against its terms and can lose API access.
 - For Google, rely on sitemaps, internal links and accurate `lastmod`. The URL Inspection API is for monitoring, not submission (quota 2,000/day and 600/min per site).
 
-### Faceted Navigation and Empty Combinations
+**IndexNow setup:**
+1. Generate a key (8-128 chars, a-z, A-Z, 0-9, hyphen) and serve it at `https://example.com/{key}.txt` with the key as the file body (static file in `public/` or a route handler).
+2. POST changed URLs on publish, update and delete, up to 10,000 URLs per request, all on the same host as the key file.
+
+```typescript
+const INDEXNOW_KEY = process.env.INDEXNOW_KEY!;
+
+export async function pingIndexNow(urls: string[]) {
+  for (let i = 0; i < urls.length; i += 10000) {
+    const res = await fetch("https://api.indexnow.org/indexnow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({
+        host: new URL(baseUrl).host,
+        key: INDEXNOW_KEY,
+        keyLocation: `${baseUrl}/${INDEXNOW_KEY}.txt`,
+        urlList: urls.slice(i, i + 10000),
+      }),
+    });
+    if (!res.ok && res.status !== 202) console.error("IndexNow failed", res.status);
+  }
+}
+```
+
+Call it from the publish/update/delete job, not on every build. Only send URLs that actually changed.
+
+### Faceted Navigation, Empty Combinations and Internal Search
 
 Linking to filter or combination URLs creates crawl waste fast. Follow Google's faceted navigation guidance:
 - If facets don't need to be indexed, block them in robots.txt (for example `disallow: /*?*color=`) or use URL fragments. `rel=canonical` and `nofollow` alone are less effective long term.
 - If facets must be indexable: use the standard `&` separator, keep path-encoded filter order fixed with no duplicates, and **return 404 for empty combinations, duplicate filters and nonsensical combos** at the URL itself (not a redirect to a generic error page).
 - Nonexistent pagination URLs return 404. Don't link to combinations that have no results.
+- Internal site-search URLs (`/search?q=...`) are infinite and low value: block them in robots.txt (`Disallow: /search`), do not link to them from templates, and never put them in sitemaps.
 
 **Next.js 16 caveat:** a streaming response starts with status 200. If `notFound()` runs after streaming has begun (inside a Suspense boundary or after `loading.tsx` renders), the response is 200 with an injected `noindex`, which Google may report as a soft 404. Check existence before any Suspense fallback renders, or return the 404 from `proxy.ts` (the Next.js 16 name for `middleware.ts`).
 
@@ -264,12 +310,17 @@ Verify:
 - [ ] Sitemap includes all indexable public pages, has no `changefreq`/`priority`, and `lastmod` is a real content-modified date
 - [ ] Each sitemap file is under 50,000 URLs and 50MB; a sitemap index is written and submitted
 - [ ] Empty facet/combination URLs return a real 404 (not 200 + noindex)
+- [ ] Internal search URLs are blocked in robots.txt, unlinked and absent from sitemaps
 - [ ] Crawl depth from homepage <= 3 for any page
 - [ ] Redirect map exists and covers all historical URL changes
 - [ ] No redirect chains or loops
 - [ ] All redirect destinations resolve to live pages
 - [ ] robots.txt allows AI retrieval crawlers (OAI-SearchBot, PerplexityBot, Claude-SearchBot)
 - [ ] (Optional) llms.txt exists at site root with category hubs and page type descriptions
+
+## Verify
+
+Build, start the app, and run seo-regression-guard against localhost (`npx -y tsx <seo-regression-guard-dir>/scripts/seo-check.ts --site http://localhost:3000 ...`). Zero errors for sitemap, robots, redirect and hub/related templates before calling this done.
 
 ## Relationship to Other Skills
 

@@ -1,7 +1,7 @@
 ---
 name: pseo-templates
 description: Create page templates with dynamic routing for programmatic SEO (Next.js 16), including unique intent-matched content per page with differentiated titles, headings, and descriptions, correct 404 status handling, and no doorway or scaled-content-abuse patterns. Use when building or refactoring pSEO page templates, setting up dynamic routes, or ensuring each generated page has unique, valuable content.
-argument-hint: "[page-type]"
+argument-hint: "[page-type] [scope: routes | structure | content | status | hubs | eeat | images | all]"
 allowed-tools: Read, Glob, Grep, Bash, Edit, Write
 ---
 
@@ -16,6 +16,10 @@ Build page templates that produce unique, intent-matched content at scale throug
 3. **Intent matching**: Each page targets a specific search intent derived from its data
 4. **Semantic HTML**: Use correct heading hierarchy, landmarks, and elements
 5. **Progressive enhancement**: Pages work without JavaScript
+
+## Scope parameter
+
+`page-type` names the template to build. Scope: `routes` = section 1, `structure` = sections 2 and 4-5, `content` = sections 3 and 3a, `status` = sections 6, 6a and 6b, `hubs` = section 7, `eeat` = section 8, `images` = section 9, `all` (default) = everything.
 
 ## Implementation Steps
 
@@ -42,13 +46,13 @@ pages/
 
 Implement `generateStaticParams` (App Router) or `getStaticPaths` (Pages Router) using the data layer's `getAllSlugs()`.
 
-**Next.js 16.x notes (current: 16.4, 2026-10-06):**
+**Next.js 16.4.x notes (>= 16.4.1 for security fixes; current stable 16.4.3):**
 - `params` and `searchParams` are Promises; always `await` them.
 - `middleware.ts` is renamed `proxy.ts` (Node.js runtime) in Next.js 16.
 - **Cache Components** (`cacheComponents: true` in next config, `"use cache"` directive): caching is opt-in and dynamic is the default. It is recommended for all apps and on by default in `create-next-app` from 16.4; Next.js 17 is announced to make it the default.
 - With Cache Components, `generateStaticParams` **must return at least one param**; an empty array is a build error. Return a few seed params and let the rest render on demand. A placeholder param plus `notFound()` is the documented workaround when you have none.
 - Without Cache Components, `generateStaticParams` can return `[]` for runtime ISR of all paths, and `dynamicParams = false` makes unlisted params 404. It is not re-run during ISR revalidation.
-- `export const ensureStatic = 'navigation' | 'prefetch' | 'shell'` (16.4) fails the build if dynamic content sneaks into a route. Use it to guarantee static pSEO templates.
+- `export const ensureStatic = 'navigation' | 'prefetch' | 'shell'` (16.4) requires `cacheComponents`. Only `'navigation'` adds build validation (fails the build on dynamic content) and it requires `generateStaticParams` to return every param. `'shell'` and `'prefetch'` add no build validation. With seeded params (rest on demand), do not claim it validates anything.
 - Do not prerender huge sets at build: Vercel build time is capped at 45 minutes per deployment. Prerender seed pages and use ISR or on-demand rendering for the rest.
 
 ```typescript
@@ -59,6 +63,8 @@ export async function generateStaticParams() {
   return seeds.map(({ category, slug }) => ({ category, slug }));
 }
 ```
+
+**Slugs and URLs:** use lowercase words separated by hyphens, never underscores (Google URL structure doc, 2026-10-23). Slug generation itself lives in pseo-data section 3.
 
 ### 2. Design the Page Template Structure
 
@@ -141,15 +147,17 @@ The goal: if you remove the page title and URL, the remaining content should sti
 
 ```typescript
 // Pattern for a pSEO page component (Next.js 16: params is a Promise)
+import { notFound } from "next/navigation";
+
 export default async function Page({
   params,
 }: {
   params: Promise<{ category: string; slug: string }>;
 }) {
-  const { slug } = await params;
+  const { category, slug } = await params;
   const data = await getPageData(slug);
 
-  if (!data) notFound();
+  if (!data || data.category !== category) notFound();
 
   return (
     <article>
@@ -170,6 +178,7 @@ export default async function Page({
 - **Fallback rendering**: If using ISR with fallback, show a loading state, not empty content (but see the status code rule below)
 - **Draft pages**: Add a mechanism to exclude draft/incomplete content from generation
 - **Pagination**: If a page type has too much content, paginate with plain links and a self-canonical per page. Google does not use rel prev/next. Nonexistent pagination URLs return 404.
+- **User-generated and tool-output pages**: Google's UGC spam guide (2026-10-26) says to `noindex` or block share pages and tool-output pages by default. Index only the ones that pass the sufficiency check in pseo-data.
 - **Empty filter combinations**: Return 404 at the URL itself for empty, duplicate or nonsensical facet combinations (Google faceted navigation guidance), not a redirect to a generic error page.
 
 ### 6a. Status Codes with Streaming: 404 Before You Stream
@@ -180,15 +189,18 @@ Do the existence check before any Suspense fallback or `loading.tsx` renders:
 
 ```typescript
 // app/[category]/[slug]/page.tsx
+import { notFound } from "next/navigation";
+import { Suspense } from "react";
+
 export default async function Page({
   params,
 }: {
   params: Promise<{ category: string; slug: string }>;
 }) {
-  const { slug } = await params;
+  const { category, slug } = await params;
   // Resolve existence BEFORE returning any <Suspense> or relying on loading.tsx
   const data = await getPageData(slug); // cache this lookup
-  if (!data) notFound();
+  if (!data || data.category !== category) notFound();
 
   return (
     <article>
@@ -209,7 +221,7 @@ Guidelines:
 
 ### 6b. HTML Weight
 
-Googlebot for Search reads only the first 2MB of uncompressed HTML (64MB for PDF), and each CSS/JS resource has its own cap. Content, links, canonical and structured data past that point can be missed. Avoid:
+Googlebot for Search reads only the first 2MB of HTML including HTTP headers (64MB for PDF), and each CSS/JS resource has its own cap. Content, links, canonical and structured data past that point can be missed. Avoid:
 - Huge inline JSON-LD or `__NEXT_DATA__`/RSC payloads (pass only the fields the page renders)
 - Giant tables or link lists rendered in full on one page (paginate)
 - Serializing whole datasets into client component props
@@ -261,10 +273,10 @@ Images are often a key differentiator for pSEO pages (product photos, location i
 - **Lazy loading**: All below-fold images use `loading="lazy"`; the LCP image uses `loading="eager"` or `fetchPriority="high"` (`priority` is deprecated in Next 16 in favor of `preload`)
 - **Image schema**: If images are a core part of the page value, include `ImageObject` in the page's JSON-LD (coordinate with pseo-schema)
 
-For pages without unique images, consider:
-- Category-level placeholder images (better than no image for OG tags)
-- Data-driven visual elements (charts, comparison tables) that serve as the page's visual content
-- Omitting `og:image` entirely rather than using a generic placeholder across thousands of pages
+- **Image sitemaps**: list important images in the sitemap; see pseo-linking section 6.
+- **AI-generated images**: embed IPTC digital source type `TrainedAlgorithmicMedia` in the file metadata (Merchant Center requires it for AI images; Google also asks you to fact-check AI alt text and structured data). See the [research doc](https://github.com/lisbeth718/pseo-skills/blob/main/docs/research-2026-10.md).
+
+**`og:image` rule (single rule):** use a page-specific image, else a per-category image generated with `opengraph-image.tsx` (`ImageResponse`). Never one site-wide placeholder across thousands of pages. Where no image fits, use data-driven visuals (charts, comparison tables) as the page's visual content.
 
 ## Template Checklist
 
@@ -278,8 +290,9 @@ Before considering a template complete:
 - [ ] Invalid slugs return a real HTTP 404 (check done before Suspense/`loading.tsx`, or in `proxy.ts`), verified with `curl -I`
 - [ ] Related pages section links to other pages in the same category
 - [ ] Semantic HTML is used (article, section, nav, h1-h3 hierarchy)
-- [ ] `generateStaticParams` returns at least one param (required with Cache Components) and seeds the key pages; `ensureStatic` set where the route must stay static
-- [ ] Rendered HTML stays well under 2MB uncompressed (no huge inline JSON)
+- [ ] `generateStaticParams` returns at least one param (required with Cache Components) and seeds the key pages; `ensureStatic = 'navigation'` only on routes whose params are complete; not relied on for seeded/on-demand routes
+- [ ] Rendered HTML stays well under 2MB (no huge inline JSON)
+- [ ] URLs use hyphens, no underscores; share and tool-output pages are `noindex` or blocked by default
 - [ ] E-E-A-T signals present: data source, last updated date, attribution
 - [ ] Primary value/answer is visible in the first viewport (no filler intros)
 - [ ] YMYL pages have elevated trust signals (author credentials, authoritative sources)
@@ -289,3 +302,7 @@ Before considering a template complete:
 - **Depends on**: pseo-data (content models and fetching)
 - **Consumed by**: pseo-metadata (template structure informs meta tag placement)
 - **Works with**: pseo-linking (templates render link components), pseo-schema (templates include schema scripts)
+
+## Verify
+
+Build, start the app, and run seo-regression-guard against localhost (`npx -y tsx <seo-regression-guard-dir>/scripts/seo-check.ts --site http://localhost:3000`). Zero errors for the touched templates, and `curl -I` on a missing slug returns 404.

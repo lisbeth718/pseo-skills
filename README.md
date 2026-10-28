@@ -1,6 +1,6 @@
 # pSEO + SEO Skills for AI Coding Assistants
 
-A complete set of skills for implementing programmatic SEO (pSEO) at scale, plus general SEO skills for multilingual sites, migrations, log analysis, regression checks and content pruning. Works with Claude Code, Cursor, GitHub Copilot, Windsurf, Cline, OpenAI Codex CLI, Aider, Continue, Amazon Q, Zed AI, Cody, Junie, Devin, and any LLM-powered coding assistant. Designed for 1000+ page sites with built-in quality safeguards, memory management, and alignment with Google's current spam policies (scaled content abuse, doorway abuse, site reputation) and optional visibility for non-Google AI agents.
+A complete set of skills for implementing programmatic SEO (pSEO) at scale, plus general SEO skills for multilingual sites, migrations, log analysis, regression checks and content pruning. Works with Claude Code, Cursor, GitHub Copilot, Windsurf, Cline, OpenAI Codex, Kiro, Aider, Zed, Devin, and any LLM-powered coding assistant that accepts Agent Skills or custom instructions. Designed for 1000+ page sites with built-in quality safeguards, memory management, and alignment with Google's current spam policies (scaled content abuse, doorway abuse, site reputation) and optional visibility for non-Google AI agents.
 
 ## Skills
 
@@ -16,7 +16,7 @@ A complete set of skills for implementing programmatic SEO (pSEO) at scale, plus
 | **pseo-performance** | Optimize builds, Core Web Vitals, memory, and gradual rollout |
 | **pseo-llm-visibility** | Visibility for non-Google AI agents: llms.txt, AI crawler controls, entity clarity (Google Search ignores llms.txt) |
 | **pseo-quality-guard** | Validate against thin content, duplicates, cannibalization, and scaled content abuse |
-| **gsc** | Post-launch monitoring: pull Search Console data, inspect URLs, manage sitemaps (self-contained scripts) |
+| **gsc** | Post-launch monitoring: pull Search Console data, inspect URLs, manage sitemaps, BigQuery bulk export for big sites (self-contained scripts) |
 | **pseo-scale** | Architect for 10K-100K+ pages: database layer, data sufficiency gating, incremental validation, crawl budget, CDN |
 | **pseo-orchestrate** | Coordinate all skills in the correct dependency order |
 
@@ -94,32 +94,30 @@ seo-migration: standalone
 
 ## Installation
 
-Each skill lives in its own folder in `skills/` (a `SKILL.md`, plus `references/` or `scripts/` where present). Copy to your AI assistant's custom instructions location:
+Each skill lives in its own folder in `skills/` (a `SKILL.md`, plus `references/` or `scripts/` where present). Skills follow the open [Agent Skills](https://agentskills.io) format (a folder with `SKILL.md`), so tools that support it can use the folders as-is. Copy whole folders, not just `SKILL.md`: concatenating files loses `references/` and `scripts/`.
 
-| Assistant | Copy to |
-|-----------|---------|
-| Claude Code | Copy whole skill folders to `.claude/skills/<skill-name>/` (including `references/` and `scripts/`) |
-| Cursor | `.cursor/rules/` (rename to `.mdc`) or `.cursorrules` |
-| GitHub Copilot | `.github/copilot-instructions.md` (concatenate) |
-| Windsurf | `.windsurf/rules/` or `.windsurfrules` |
-| Cline | `.clinerules` or `.cline/rules/` |
-| OpenAI Codex CLI | `AGENTS.md` (concatenate) |
-| Aider | Pass with `--read` flag (e.g. `--read skills/SKILL.md`) |
-| Continue | `.continue/rules/` |
-| Amazon Q Developer | `.amazonq/rules/` |
-| Zed AI | `.zed/rules/` or Zed assistant settings |
-| Sourcegraph Cody | `.cody/instructions.md` (concatenate) |
-| JetBrains Junie | `.junie/guidelines.md` |
-| Devin | `devin.md` or knowledge base |
-| Other | Feed as system prompts or custom instructions |
+Paths below were checked against each tool's docs on 2026-10-28. Where a path is not listed, check your tool's docs.
 
-The skills are plain markdown and work with any assistant that accepts custom instructions. The `gsc` skill also ships TypeScript scripts: run `npm install` once in `skills/gsc/scripts/` (copy that folder too if your assistant needs a flat file). `seo-regression-guard` ships a `scripts/` folder as well; copy it with the skill.
+| Tool | Skills (copy whole folders) | Rules / instructions fallback |
+|------|-----------------------------|-------------------------------|
+| Claude Code | `.claude/skills/<name>/` (project) or `~/.claude/skills/<name>/` (personal) | `CLAUDE.md` |
+| OpenAI Codex | `.agents/skills/<name>/` (repo) or `~/.agents/skills/<name>/` (user) | `AGENTS.md`: default cap is 32 KiB (`project_doc_max_bytes`), so do not concatenate skills into it; add a pointer line to the skill folders instead |
+| Cursor | `.cursor/skills/`, `.agents/skills/` (project), `~/.cursor/skills/`, `~/.agents/skills/` (user); also reads `.claude/skills/` and `.codex/skills/` | `.cursor/rules/*.mdc` with frontmatter `description`, `globs`, `alwaysApply` (a plain `.md` there is ignored); `AGENTS.md` is supported. Check Cursor's docs for the legacy `.cursorrules` |
+| GitHub Copilot | `.github/skills/`, `.claude/skills/` or `.agents/skills/` (project); `~/.copilot/skills/` or `~/.agents/skills/` (personal) | `.github/instructions/*.instructions.md` with `applyTo` frontmatter, `.github/copilot-instructions.md`, `AGENTS.md` |
+| Windsurf / Devin | Check your tool's docs for the skills path | `.devin/rules/*.md` (preferred), `.windsurf/rules/*.md` (fallback), 12,000 characters per file; `AGENTS.md`; legacy `.windsurfrules` still read; `AGENTS.md` in any directory (no limit stated). Devin AGENTS.md limits not verified, check the docs |
+| Cline | Check your tool's docs | `.clinerules/` or `.cline/rules/` directory; also reads `AGENTS.md` |
+| Kiro (Amazon Q Developer users: check the migration guide in Kiro's docs) | Kiro supports Agent Skills; check its docs for the path | `.kiro/steering/` (workspace) or `~/.kiro/steering/` (global); reads `AGENTS.md` |
+| Aider | n/a | `aider --read skills/pseo-data/SKILL.md` (or `read:` in `.aider.conf.yml`) |
+| Zed | n/a | `.rules` in the project root; Zed also reads `.cursorrules`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`, `AGENT.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` (first match wins) |
+| Continue, JetBrains Junie, other | Check your tool's docs | Feed `SKILL.md` files as custom instructions or system prompts |
+
+When a tool only takes rule files, add one skill per file (not one concatenated file) and keep `references/` next to it. The `gsc` skill also ships TypeScript scripts: run `npm --prefix skills/gsc/scripts install` once (or the same against the folder you copied it to). `seo-regression-guard` ships a `scripts/` folder as well; copy it with the skill.
 
 ## Usage
 
 Ask your AI assistant to run individual skills or the full pipeline:
 
-- **Full pipeline**: "Run the pseo-orchestrate skill with full pipeline"
+- **Full pipeline**: ask for `pseo-orchestrate`, or run `/pseo-orchestrate full` (Claude Code)
 - **Discovery only**: "Run pseo-discovery to find pSEO opportunities"
 - **Single skill**: "Run pseo-data to design the data architecture" or "Run pseo-quality-guard to check for abuse patterns"
 
@@ -137,13 +135,13 @@ The orchestrate skill handles dependency ordering automatically. For manual exec
 - **Gradual rollout**: Rollout strategies from 100 to 100K pages
 - **Content enrichment pipeline**: Structured data enrichment with optional LLM-assisted generation and human review sampling
 - **Post-launch monitoring**: self-contained Search Console scripts (OAuth, search analytics, URL inspection, sitemaps), read-only scope by default
-- **Framework-agnostic**: Next.js App Router by default, adaptable to Astro, Nuxt, Remix, SvelteKit
+- **Framework-agnostic**: Next.js App Router by default, adaptable to Astro, Nuxt, Remix, SvelteKit. For Next.js use 16.4.x (>= 16.4.1 for security fixes)
 
 ## Sources
 
-Current facts (Google policies, ranking updates, crawler limits, Next.js 16.4, AI crawlers) are documented with links in [docs/research-2026-10.md](docs/research-2026-10.md). Items marked UNVERIFIED there rest on secondary sources.
+Current facts (Google policies, ranking updates, crawler limits, Next.js 16.4.x, AI crawlers) are documented with links in [docs/research-2026-10.md](docs/research-2026-10.md). Items marked UNVERIFIED there rest on secondary sources.
 
-Last updated: 2026-10-12
+Last updated: 2026-10-28
 
 ## Author
 

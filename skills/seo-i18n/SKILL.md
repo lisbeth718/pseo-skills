@@ -9,6 +9,17 @@ allowed-tools: Read, Glob, Grep, Bash, Edit, Write, WebFetch
 
 Ship language and region versions that Google can discover, pair up and serve to the right users, without triggering duplicate or scaled-content problems.
 
+## Scope parameter
+
+| Value | Sections |
+|---|---|
+| `structure` | 1 |
+| `hreflang` | 2, 3, 7 (hreflang metadata and sitemaps) |
+| `routing` | 4, 7 (routing and `proxy.ts`) |
+| `content` | 5, 6 |
+| `validate` | 8 |
+| `all` (default) | everything |
+
 ## Core Principles
 
 1. **One URL per language/region version**: never switch language by cookie, IP or Accept-Language on the same URL (Googlebot crawls mostly from the US and sends no Accept-Language)
@@ -134,7 +145,7 @@ export async function generateMetadata({ params }: { params: Promise<{ lang: str
 }
 ```
 
-Caveat: in Next.js 16, hreflang from an async `generateMetadata` can stream into `<body>` for Googlebot instead of `<head>`. Set `htmlLimitedBots: /.*/` in `next.config` to force blocking metadata, make `generateMetadata` cached (`"use cache"`), or prefer sitemap hreflang.
+Caveat: in Next.js 16, hreflang from an async `generateMetadata` can stream into `<body>` instead of `<head>`. Make `generateMetadata` cached (`"use cache"`) or prefer sitemap hreflang; see pseo-metadata section 8a (htmlLimitedBots, which replaces the default bot list).
 
 Set `metadataBase` so relative paths resolve to absolute URLs. Include the current page in `languages`. Omit `x-default` if no default version exists.
 
@@ -156,7 +167,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 }
 ```
 
-Next emits the `xhtml:link` entries. Every URL repeats the full set. Split with `generateSitemaps` past 50,000 URLs, keeping each group's versions in the same file. `generateSitemaps` does not emit a sitemap index: write the sitemap index yourself (see pseo-linking). With N alternates per URL the file can hit the 50MB uncompressed limit before 50k URLs, so size chunks accordingly.
+Next emits the `xhtml:link` entries. Every URL repeats the full set. Past the sitemap limits, split and write the index per pseo-linking section 6, keeping each group's versions in the same file. With N alternates per URL the file can hit the 50MB limit before 50k URLs, so size chunks accordingly.
 
 ## 8. Validation Checklist
 
@@ -164,7 +175,7 @@ Next emits the `xhtml:link` entries. Every URL repeats the full set. Split with 
 - [ ] Each version self-canonical and self-referencing in hreflang
 - [ ] Every hreflang edge has a return edge
 - [ ] Codes valid (no `UK`, no region-only, no `es-419`)
-- [ ] `x-default` present and itself reciprocal
+- [ ] `x-default` present when a default version exists, and itself reciprocal
 - [ ] No hreflang target is redirected, noindexed or canonicalized elsewhere
 - [ ] One hreflang method in use
 - [ ] `<html lang>` matches content; body actually translated
@@ -194,6 +205,7 @@ async function loadUrls(loc: string): Promise<any[]> {
 async function main() {
   const urls: any[] = await loadUrls(process.argv[2]);
   const graph = new Map<string, Map<string, string>>(); // url -> (hreflang -> href)
+  const headCache = new Map<string, number>(); // href -> HEAD status; each target is requested once
 
   for (const u of urls) {
     const links = arr(u["xhtml:link"]);
@@ -209,8 +221,9 @@ async function main() {
       const back = graph.get(href);
       if (!back) { console.error(`TARGET NOT IN SITEMAP: ${url} -> ${href}`); errors++; continue; }
       if (![...back.values()].includes(url)) { console.error(`NO RETURN: ${href} !-> ${url}`); errors++; }
-      const res = await fetch(href, { method: "HEAD", redirect: "manual" });
-      if (res.status !== 200) { console.error(`${res.status}: ${href}`); errors++; }
+      let status = headCache.get(href);
+      if (status === undefined) { status = (await fetch(href, { method: "HEAD", redirect: "manual" })).status; headCache.set(href, status); }
+      if (status !== 200) { console.error(`${status}: ${href}`); errors++; }
     }
   }
   process.exit(errors ? 1 : 0);

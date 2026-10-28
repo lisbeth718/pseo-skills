@@ -60,24 +60,7 @@ llms.txt is a plain Markdown file at `/llms.txt`. **Google Search ignores it.** 
 
 Do not expect a ranking or citation effect. Do not spend time maintaining it by hand.
 
-```markdown
-# [Site Name]
-
-> [One-sentence description of what this site covers]
-
-## Key Pages
-
-- [Category Hub A](/category-a): Description of this category
-- [Category Hub B](/category-b): Description of this category
-
-## Content Types
-
-- [Page Type]: [What these pages contain]
-
-## Data Sources
-
-- [Where the data comes from, how often updated]
-```
+Use the template in `references/ai-crawlers.md` ("llms.txt Format Reference").
 
 v2 spec options (optional): per-page Markdown versions (`page.html.md` or `page.md`), discovery through `<link rel="alternate" type="text/markdown">` or an HTTP `Link:` header. `/llms-full.txt` is a common convention, not required. Generate the file from the content model at build time so it never drifts.
 
@@ -94,6 +77,14 @@ v2 spec options (optional): per-page Markdown versions (`page.html.md` or `page.
 
 Measurement: AI Overviews and AI Mode count in Search Console Performance "Web" totals. The Generative AI performance report (all sites since 2026-08-31) shows **impressions only**, with dimensions for pages, countries, devices and dates. It has no query dimension, no clicks, and no API support found. Treat clicks and queries from AI features as not measurable.
 
+For all Google controls (robots meta, `data-nosnippet`, X-Robots-Tag, Search generative AI setting) use Google's "Control what you share" doc (2026-10-21) as the single reference: https://developers.google.com/search/docs/crawling-indexing/control-what-you-share
+
+**Measurement: AI referral traffic.** The Generative AI report is impressions-only, so measure clicks from other engines separately:
+- Analytics referrers: chatgpt.com, perplexity.ai, claude.ai, gemini.google.com, copilot.microsoft.com. Some engines append `utm_source`; this is not verified per engine, so match referrers too and do not rely on it
+- Server logs: seo-log-analysis (AI bot fetches vs human referrals)
+
+Bot fetches, not referrals: the Vercel Observability "AI Traffic" view (2026-10-28) shows requests by verified AI bot, most-crawled pages, Markdown requests and error pages. Use it for crawl monitoring, not for counting human visits.
+
 ### 4. Configure AI Crawler Access in robots.txt
 
 robots.txt creation is owned by **pseo-linking** (section 8). This skill defines which AI crawler rules to include. AI bots fall into three classes:
@@ -102,47 +93,7 @@ robots.txt creation is owned by **pseo-linking** (section 8). This skill defines
 - **User-fetch bots** fetch a page when a user asks. Some ignore robots.txt. Blocking can reduce visibility for user-directed requests
 - **Training bots** collect data for model training. Allowing or blocking is a business choice with no effect on Google Search
 
-**Sensible default: allow search and user-fetch bots, opt out of training only if you choose to.**
-
-```
-# AI search and user-fetch bots: allow (needed to appear in these products)
-User-agent: OAI-SearchBot
-Allow: /
-
-User-agent: ChatGPT-User
-Allow: /
-
-User-agent: Claude-SearchBot
-Allow: /
-
-User-agent: Claude-User
-Allow: /
-
-User-agent: PerplexityBot
-Allow: /
-
-User-agent: Perplexity-User
-Allow: /
-
-# Training bots: optional opt-outs. Remove any group you are fine with.
-User-agent: GPTBot
-Disallow: /
-
-User-agent: ClaudeBot
-Disallow: /
-
-User-agent: Google-Extended
-Disallow: /
-
-User-agent: Applebot-Extended
-Disallow: /
-
-User-agent: meta-externalagent
-Disallow: /
-
-User-agent: CCBot
-Disallow: /
-```
+**Sensible default: allow search and user-fetch bots, opt out of training only if you choose to.** The robots.txt block and the llms.txt template live in `references/ai-crawlers.md`; use them from there and do not copy them into this skill.
 
 Notes:
 - `Google-Extended` does **not** control AI Overviews or AI Mode. Use the Search Console setting or snippet controls (section 3)
@@ -152,7 +103,7 @@ Notes:
 - Content-Signal / Content-Usage lines are not parsed by Google (inferred; Google supports only user-agent, allow, disallow, sitemap)
 - Training opt-out does not affect Google Search ranking; do not disallow `Googlebot` or `Bingbot`
 
-See `references/ai-crawlers.md` for the full table of tokens, purposes, and robots.txt behavior, plus Cloudflare controls and the IETF aipref status.
+See `references/ai-crawlers.md` for the robots.txt template, the full table of tokens and purposes, llms.txt, Cloudflare controls and the IETF aipref status.
 
 ### 5. Content for Non-Google Agents (heuristics, not Google guidance)
 
@@ -194,6 +145,17 @@ Consistent naming helps both people and systems disambiguate. Not a Google AI re
 - Set `dateModified` and sitemap `lastmod` from real content-change timestamps, not build time
 - Use ISR with sensible revalidation for data that changes (prices, availability, ratings)
 - Freshness claims for AI citation come from vendor studies and vary by topic. Treat as a heuristic
+
+## Scope Parameter
+
+If `$ARGUMENTS` specifies a focus:
+- `all` (default): Sections 1-8
+- `google-ai`: Sections 1, 3
+- `llms-txt`: Section 2
+- `crawlers`: Section 4 (and 7 for engine requirements)
+- `controls`: Section 3
+- `content`: Sections 5, 8
+- `entities`: Section 6
 
 ## LLM Visibility Checklist
 

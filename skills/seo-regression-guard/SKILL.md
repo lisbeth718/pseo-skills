@@ -11,6 +11,15 @@ Catches the silent breakages that kill indexing: a template starts returning 200
 
 No GitHub Actions needed. Run it by hand, from a git hook, or as the last step of the deploy script. The bundled script is `scripts/seo-check.ts` (Node 20+, no dependencies, run with `npx tsx`).
 
+## Scope parameter
+
+| Value | Sections |
+|---|---|
+| site URL | Quick start (check that site) |
+| `baseline` | Workflow step 1 (`--update-baseline`) |
+| `check` | Quick start, What it checks, Report format |
+| `local-build` | Quick start step 1 (local production build) |
+
 ## Quick start
 
 Script location depends on how the skill is installed. Either use the installed path (`.claude/skills/seo-regression-guard/scripts/seo-check.ts`, below as `$SEO_CHECK`), or copy it to your project's `scripts/` and add `tsx` as a devDependency (`npm i -D tsx`), then run `npx tsx scripts/seo-check.ts`.
@@ -33,9 +42,9 @@ npx tsx $SEO_CHECK --site https://example.com --update-baseline
 
 (`npm start` may leave child processes; if the port stays busy, also run `pkill -f "next start"`.)
 
-Flags: `--per-template 5` (URLs sampled per template), `--templates templates.json` (path regex per template name; default groups by first segment and depth with placeholders, e.g. `/jobs/*/*`, and single root-level slugs as `/*`), `--max-html-bytes 2000000`, `--json`.
+Flags: `--per-template 5` (URLs sampled per template), `--templates templates.json` (path regex per template name; default groups by first segment and depth with placeholders, e.g. `/jobs/*/*`, and single root-level slugs as `/*`), `--max-html-bytes 2000000`, `--min-text 500` (min visible text chars), `--min-links 3` (min internal links), `--json`.
 
-Local builds: the sitemap lists production URLs. Generate it from `NEXT_PUBLIC_SITE_URL=http://localhost:3000` for the run, or the check will report `sitemap-host`.
+Local builds: no need to rebuild with a localhost site URL. When `--site` differs from the origin in robots.txt `Sitemap:` lines, the script rewrites those sitemap URLs and every `<loc>` to the `--site` origin before fetching, downgrades `sitemap-host` to a warning, adds a `sitemap-origin` warning, and compares canonicals and hreflang self-references by path plus query instead of absolute URL. Baselines taken on another origin are compared the same way.
 
 Commit `.seo-baseline.json` so regressions are visible in review. First run writes it if missing.
 
@@ -55,6 +64,7 @@ For a post-build step in `package.json`: `"postdeploy:seo": "tsx scripts/seo-che
 | Title / description | `title-missing`, `description-missing`, `title-duplicate`, `description-duplicate` | Present; not shared by more than 10% of the sample |
 | hreflang | `hreflang-dupes`, `hreflang-relative`, `hreflang-self` | When present: fully qualified URLs, no duplicate codes, self-reference included |
 | JSON-LD | `jsonld-invalid` | Every `application/ld+json` block parses. Does not validate schema types (use pseo-schema) |
+| JS-rendering parity | `body-h1-missing` (error), `body-text-min` (warn), `internal-links-min` (warn) | Checked on raw server HTML, no JS executed: at least one `<h1>`; visible text (scripts, styles and tags stripped) of at least `--min-text` chars (default 500); at least `--min-links` internal `<a href>` (default 3). Catches client-rendered templates that look empty to crawlers that do not run JS |
 | HTML size | `html-size` | Googlebot reads the first 2MB of HTML; error above the limit, warn above 75% |
 
 Baseline snapshots are keyed by path plus query, so a baseline from production can be compared against localhost (a warning is raised when the origin differs). Every baseline URL is re-checked on each run in addition to the new sample; a baseline URL that is now non-200 is a regression.
@@ -63,7 +73,7 @@ Regression diff (vs baseline): sitemap URL count drops more than 10%, status 200
 
 ## Why these checks, specifically
 
-**Next.js soft 404.** Streaming responses start with status 200. `notFound()` called after streaming has begun (inside a Suspense boundary, behind `loading.tsx`) sends 200 plus an injected `<meta name="robots" content="noindex">`. Crawlers may label it a soft 404. The probe catches this. Fix: check data existence before anything streams (in the page's top-level async component before any Suspense, or in `proxy.ts` return 404), and use `ensureStatic` on routes that must stay static.
+**Next.js soft 404.** Streaming responses start with status 200. `notFound()` called after streaming has begun (inside a Suspense boundary, behind `loading.tsx`) sends 200 plus an injected `<meta name="robots" content="noindex">`. Crawlers may label it a soft 404. The probe catches this. Fix: check data existence before anything streams (in the page's top-level async component before any Suspense, or in `proxy.ts` return 404), and, only when generateStaticParams returns every param, `ensureStatic = 'navigation'` (the only value that validates at build).
 
 **Canonical must be in `<head>`.** Next.js can stream `generateMetadata` output into `<body>` for JS-capable bots. Google's canonical docs specify `<head>`, and there is no documented tolerance for a canonical in body (robots meta in body is respected, since 2026-03). The check reads `<head>` only, so a body canonical fails as `canonical-missing`. Fix with static or `use cache` metadata, or `htmlLimitedBots: /.*/` to force head placement. This is a recommended mitigation, not a Google statement.
 

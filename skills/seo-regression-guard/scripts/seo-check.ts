@@ -2,7 +2,8 @@
 /**
  * SEO regression check. Node 20+, no dependencies.
  *   npx tsx seo-check.ts --site https://example.com [--per-template 5] [--baseline .seo-baseline.json]
- *        [--update-baseline] [--templates templates.json] [--max-html-bytes 2000000] [--json]
+ *        [--update-baseline] [--templates templates.json] [--max-html-bytes 2000000]
+ *        [--min-text 500] [--min-links 3] [--json]
  * Exit code 1 on any error or regression vs baseline.
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -20,6 +21,8 @@ if (!site) { console.error("--site required"); process.exit(2); }
 const perTemplate = Number(opt("per-template", "5"));
 const baselinePath = opt("baseline", ".seo-baseline.json")!;
 const maxBytes = Number(opt("max-html-bytes", "2000000"));
+const minText = Number(opt("min-text", "500"));
+const minLinks = Number(opt("min-links", "3"));
 const UA = "seo-regression-guard/1.0";
 const origin = new URL(site).origin;
 
@@ -35,6 +38,14 @@ const templateOf = (u: string) => {
   return "/" + segs[0] + "/" + segs.slice(1).map(() => "*").join("/");
 };
 const keyOf = (u: string) => { const x = new URL(u); return x.pathname + x.search; };
+
+// Local-build mode: robots.txt/sitemap list production URLs. Rewrite URLs on `from` origin to `to` origin.
+const rewriteOrigin = (u: string, from: string, to: string) => {
+  if (from === to) return u;
+  try { const x = new URL(u); return x.origin === from ? to + x.pathname + x.search + x.hash : u; } catch { return u; }
+};
+let srcOrigin = origin; // origin the site itself advertises in robots.txt/sitemaps
+const rw = (u: string) => rewriteOrigin(u, srcOrigin, origin);
 
 const get = (url: string, init: RequestInit = {}) =>
   fetch(url, { redirect: "manual", headers: { "user-agent": UA }, ...init });
@@ -54,10 +65,10 @@ async function readSitemap(url: string, issues: Issue[], depth = 0): Promise<Ent
   const xml = raw.toString("utf8");
   if (/<sitemapindex/.test(xml) && depth < 2) {
     const out: Entry[] = [];
-    for (const s of tags(xml, "sitemap")) { const l = val(s, "loc"); if (l) out.push(...(await readSitemap(l, issues, depth + 1))); }
+    for (const s of tags(xml, "sitemap")) { const l = val(s, "loc"); if (l) out.push(...(await readSitemap(rw(l), issues, depth + 1))); }
     return out;
   }
-  const entries = tags(xml, "url").map((u) => ({ loc: val(u, "loc")!, lastmod: val(u, "lastmod") })).filter((e) => e.loc);
+  const entries = tags(xml, "url").map((u) => ({ loc: rw(val(u, "loc") ?? ""), lastmod: val(u, "lastmod") })).filter((e) => e.loc);
   if (!entries.length) issues.push({ url, template: "sitemap", sev: "error", code: "sitemap-empty", msg: "no <url> entries" });
   if (entries.length > 50000) issues.push({ url, template: "sitemap", sev: "error", code: "sitemap-size", msg: `${entries.length} URLs > 50000` });
   return entries;
@@ -119,6 +130,13 @@ async function main() {
   if (rr.status >= 500) add(`${origin}/robots.txt`, "error", "robots-status", `HTTP ${rr.status} (Google treats persistent 5xx as fully disallowed)`);
   else if (rr.status !== 200) add(`${origin}/robots.txt`, "warn", "robots-status", `HTTP ${rr.status} (crawlers treat as allow-all)`);
   const sitemapUrls = [...robotsTxt.matchAll(/^sitemap:\s*(\S+)/gim)].map((m) => m[1]);
+  let smOrigin = origin; try { smOrigin = new URL(sitemapUrls[0], origin).origin } catch {}
+  const mismatch = sitemapUrls.length > 0 && smOrigin !== origin;
+  if (mismatch) {
+    srcOrigin = smOrigin;
+    add(origin, "warn", "sitemap-origin", `robots.txt/sitemap advertise ${srcOrigin}, checking ${origin}: sitemap URLs rewritten to ${origin}, canonicals compared by path`);
+    for (let i = 0; i < sitemapUrls.length; i++) sitemapUrls[i] = rw(sitemapUrls[i]);
+  }
   if (!sitemapUrls.length) { sitemapUrls.push(`${origin}/sitemap.xml`); add(`${origin}/robots.txt`, "warn", "robots-no-sitemap", "no Sitemap: line"); }
   const rules = robotsRules(robotsTxt);
 
@@ -134,7 +152,7 @@ async function main() {
   if (lastmods.length > 20 && new Set(lastmods.map((d) => d.slice(0, 16))).size <= 2)
     add(sitemapUrls[0], "warn", "lastmod-uniform", "lastmod identical across URLs (build-time new Date()?); Google ignores unverifiable lastmod");
   if (lastmods.some((d) => Date.parse(d) > Date.now() + 864e5)) add(sitemapUrls[0], "error", "lastmod-future", "lastmod in the future");
-  if (entries.some((e) => !e.loc.startsWith(origin))) add(sitemapUrls[0], "error", "sitemap-host", "sitemap lists URLs on another host/scheme");
+  if (entries.some((e) => !e.loc.startsWith(origin))) add(sitemapUrls[0], mismatch ? "warn" : "error", "sitemap-host", "sitemap lists URLs on another host/scheme");
 
   // sample per template (deterministic: evenly spaced)
   const byT = new Map<string, Entry[]>();
@@ -148,10 +166,12 @@ async function main() {
   // Re-check every baseline URL too (on the current origin), in addition to the new sample
   const sampled = new Set(sample.map((e) => keyOf(e.loc)));
   const extra: Entry[] = [];
+  let baseOriginDiffers = false;
   let base: { site?: string; urlCount: number; snaps: Record<string, Snap> } | null = null;
   if (existsSync(baselinePath) && !flag("update-baseline")) {
     base = JSON.parse(readFileSync(baselinePath, "utf8"));
-    if (base!.site && base!.site !== origin) add(origin, "warn", "baseline-origin", `baseline was taken on ${base!.site}, checking ${origin}; comparing by path`);
+    if (base!.site && base!.site !== origin) baseOriginDiffers = true;
+    if (baseOriginDiffers) add(origin, "warn", "baseline-origin", `baseline was taken on ${base!.site}, checking ${origin}; comparing by path`);
     for (const k of Object.keys(base!.snaps)) if (!sampled.has(k)) extra.push({ loc: origin + k });
   }
 
@@ -182,7 +202,8 @@ async function main() {
     else {
       if (canon.length > 1) add(url, "error", "canonical-multiple", `${canon.length} canonical tags`);
       canonical = new URL(decode(canon[0].href), url).href;
-      if (canonical !== url && canonical.replace(/\/$/, "") !== url.replace(/\/$/, "")) add(url, "error", "canonical-mismatch", `canonical ${canonical} != sitemap URL`);
+      const cmpC = mismatch ? keyOf(canonical) : canonical, cmpU = mismatch ? keyOf(url) : url;
+      if (cmpC !== cmpU && cmpC.replace(/\/$/, "") !== cmpU.replace(/\/$/, "")) add(url, "error", "canonical-mismatch", `canonical ${canonical} != sitemap URL`);
     }
 
     const title = decode(h.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
@@ -196,8 +217,21 @@ async function main() {
       if (new Set(langs).size !== langs.length) add(url, "error", "hreflang-dupes", "duplicate hreflang values");
       const hrefs = alts.map((a) => a.href);
       if (hrefs.some((x) => !/^https?:\/\//.test(x))) add(url, "error", "hreflang-relative", "hreflang href must be fully qualified");
-      if (!hrefs.some((x) => x.replace(/\/$/, "") === url.replace(/\/$/, ""))) add(url, "error", "hreflang-self", "no self-referencing hreflang");
+      const norm = (x: string) => (mismatch ? keyOf(x) : x).replace(/\/$/, "");
+      if (!hrefs.some((x) => norm(x) === norm(url))) add(url, "error", "hreflang-self", "no self-referencing hreflang");
     }
+
+    // JS-rendering parity: raw server HTML must carry content without executing JS
+    const body = html.match(/<body[\s\S]*<\/body>/i)?.[0] ?? html;
+    if (!/<h1[\s>]/i.test(body)) add(url, "error", "body-h1-missing", "no <h1> in raw server HTML (rendered client-side only?)");
+    const textLen = body.replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").trim().length;
+    if (textLen < minText) add(url, "warn", "body-text-min", `${textLen} chars of visible text in raw HTML (< ${minText}); content may depend on JS`);
+    const internal = [...body.matchAll(/<a\s[^>]*href=["']([^"'#][^"']*)["']/gi)].filter((m) => {
+      const hr = decode(m[1]);
+      if (/^(mailto:|tel:|javascript:)/i.test(hr)) return false;
+      try { const o = new URL(hr, url).origin; return o === origin || o === srcOrigin; } catch { return false; }
+    }).length;
+    if (internal < minLinks) add(url, "warn", "internal-links-min", `${internal} internal links in raw HTML (< ${minLinks})`);
 
     let ld = 0;
     for (const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
@@ -236,7 +270,8 @@ async function main() {
       const n = snaps[u];
       if (!n) continue; // unreachable: every baseline URL is re-checked
       if (b.status === 200 && n.status !== 200) regressions.push(`${u}: status 200 -> ${n.status}`);
-      if (b.canonical && n.canonical !== b.canonical) regressions.push(`${u}: canonical changed ${b.canonical} -> ${n.canonical || "(none)"}`);
+      const sameCanon = baseOriginDiffers ? (n.canonical && keyOf(n.canonical)) === keyOf(b.canonical || "http://x/") : n.canonical === b.canonical;
+      if (b.canonical && !sameCanon) regressions.push(`${u}: canonical changed ${b.canonical} -> ${n.canonical || "(none)"}`);
       if (!/noindex/i.test(b.robots + b.xrobots) && /noindex/i.test(n.robots + n.xrobots)) regressions.push(`${u}: became noindex`);
       if (b.title && !n.title) regressions.push(`${u}: title lost`);
       if (b.description && !n.description) regressions.push(`${u}: description lost`);

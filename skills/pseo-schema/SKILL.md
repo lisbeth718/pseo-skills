@@ -1,7 +1,7 @@
 ---
 name: pseo-schema
 description: Implement JSON-LD structured data for programmatic SEO pages using types that still produce Google rich results (Product, Organization, LocalBusiness, BreadcrumbList, Article, JobPosting, Event, Review snippets and similar). Use when adding or fixing schema markup, removing retired types (FAQ, HowTo), or when Google Search Console reports schema errors. Markup must match visible content; no special schema is needed for AI features.
-argument-hint: "[types: Article | Product | LocalBusiness | Organization | Breadcrumb | JobPosting | Event | all]"
+argument-hint: "[types: Article | Product | LocalBusiness | Organization | Breadcrumb | JobPosting | Event | Author | all]"
 allowed-tools: Read, Glob, Grep, Bash, Edit, Write
 ---
 
@@ -20,6 +20,10 @@ Research basis: https://github.com/lisbeth718/pseo-skills/blob/main/docs/researc
 5. **No fabrication**: Only include fields backed by real data
 6. **Matches visible content**: Structured data must match the text users see on the page (Google's AI features docs repeat this)
 7. **Review it like content**: Google says to manually fact-check AI-generated structured data, along with titles, meta descriptions and alt text
+
+## Scope parameter
+
+`types` selects what to implement. `Article`, `Product`, `LocalBusiness`, `JobPosting`, `Event`, `Breadcrumb`, `Organization` = sections 1-5 plus the matching rule in section 4 (Product also section 8, LocalBusiness also section 9). `Author` = sections 6 and 7 (author, reviewer and entity pages). `all` (default) = everything.
 
 ## What Schema Does and Does Not Do (as of 2026-10-12)
 
@@ -162,7 +166,7 @@ export function JsonLd({ data }: { data: Record<string, unknown> | null }) {
 }
 ```
 
-Keep JSON-LD small. Googlebot for Search reads only the first 2MB of uncompressed HTML, so do not inline huge `ItemList` or dataset blobs on every page.
+Keep JSON-LD small: it counts toward the Googlebot 2MB limit (pseo-templates section 6b), so do not inline huge `ItemList` or dataset blobs on every page.
 
 ### 3. Compose Schema per Page
 
@@ -227,13 +231,28 @@ E-E-A-T is not a specific ranking factor, but trust matters, especially on YMYL 
 
 **Author/Organization schema:**
 ```typescript
+interface AuthorInfo {
+  type: "person" | "organization";
+  name: string;
+  url: string;
+  role?: string;
+  credentialCategory?: string;
+  sameAs?: string[];
+}
+
 export function generateAuthorSchema(author: AuthorInfo) {
   return {
     "@context": "https://schema.org",
     "@type": author.type === "person" ? "Person" : "Organization",
     name: author.name,
     url: author.url,
-    ...(author.credentials && { jobTitle: author.credentials }),
+    ...(author.role && { jobTitle: author.role }),
+    ...(author.credentialCategory && {
+      hasCredential: {
+        "@type": "EducationalOccupationalCredential",
+        credentialCategory: author.credentialCategory,
+      },
+    }),
     ...(author.sameAs && { sameAs: author.sameAs }),
   };
 }
@@ -244,9 +263,79 @@ export function generateAuthorSchema(author: AuthorInfo) {
 **dateModified must be accurate.** Never set dateModified to today's date if the content has not actually changed. Use the real last-modified date from the data source. The same rule applies to sitemap `lastmod`, which Google uses only if it is consistently accurate.
 
 **For YMYL content, additionally include:**
-- `reviewedBy` on medical/health content (Person with `MedicalBusiness` or `Physician` type)
+- `reviewedBy` on `WebPage` pointing to a `Person` (not a business type): `jobTitle` is the person's role, and `hasCredential` is `{ "@type": "EducationalOccupationalCredential", credentialCategory }`. Show the same reviewer and credential visibly on the page.
 - `citation` or `isBasedOn` for content derived from authoritative sources
-- `credentialCategory` on author's Person schema if applicable
+
+```typescript
+export function generateReviewedWebPage(url: string, reviewer: { name: string; url: string; role: string; credentialCategory: string }) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    url,
+    reviewedBy: {
+      "@type": "Person",
+      name: reviewer.name,
+      url: reviewer.url,
+      jobTitle: reviewer.role,
+      hasCredential: {
+        "@type": "EducationalOccupationalCredential",
+        credentialCategory: reviewer.credentialCategory,
+      },
+    },
+  };
+}
+```
+
+`reviewedBy`, `hasCredential` and `credentialCategory` are schema.org vocabulary; the [research doc](https://github.com/lisbeth718/pseo-skills/blob/main/docs/research-2026-10.md) does not verify Google reads them for any feature, so treat them as semantic markup of visible facts.
+
+### 7. Author and Entity Pages (E-E-A-T)
+
+Bylines should link to real pages, not just print names:
+
+- **Author profile page** (`/authors/[slug]`): visible bio, role, credentials, and the pages they wrote. Markup: `ProfilePage` with `mainEntity` a `Person` (`name`, `jobTitle`, `sameAs` links to real profiles, `hasCredential` as above). "Profile page" is listed in Google's Search Gallery (research doc, Search Gallery list and section 11); the page must be about one real person or organization, with first-party content.
+- **Organization / about page** (`/about`): the single place for the site-level `Organization` (name, logo, `sameAs`, contact). Link to it from the footer and from bylines of organization-authored pages.
+- **Bylines** on every pSEO page link to the author or about page, using the same name as `author` in the Article schema. Organization attribution is acceptable for data-driven pages; do not invent a person.
+
+```typescript
+export function generateProfilePageSchema(url: string, person: AuthorInfo) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "ProfilePage",
+    url,
+    mainEntity: {
+      "@type": "Person",
+      name: person.name,
+      jobTitle: person.role,
+      sameAs: person.sameAs,
+      ...(person.credentialCategory && {
+        hasCredential: {
+          "@type": "EducationalOccupationalCredential",
+          credentialCategory: person.credentialCategory,
+        },
+      }),
+    },
+  };
+}
+```
+
+Never fabricate people, credentials or `sameAs` links.
+
+### 8. E-commerce (short)
+
+Verified in the [research doc](https://github.com/lisbeth718/pseo-skills/blob/main/docs/research-2026-10.md): Merchant listing, Product variants, Return policy and Shipping policy are Search Gallery features; merchant shipping policy markup was added 2025-11-12; `Product.category` and sale-duration fields were added in 2026 (see above).
+
+- Product and merchant listing data must match the Merchant Center feed (price, availability, identifiers) and the visible page.
+- Shipping and returns: `shippingDetails` on `Offer` and `hasMerchantReturnPolicy` on `Offer` (or an organization-level policy). Property names are schema.org; check the current Google doc for required fields before shipping.
+- Variants: `ProductGroup` with `hasVariant` / `variesBy` for size or color variants. Check the Google Product variants doc for which properties it requires; this skill does not verify them.
+- Per-field requirements beyond the above are not verified here. Keep markup generic and follow the live Google docs.
+
+### 9. Local SEO (short)
+
+`LocalBusiness` only for a real location, one per location, with NAP (name, address, phone) identical to the visible page and the business profile. A location page without unique local data (real address, staff, inventory, local facts) is a doorway page, not a local page: see pseo-quality-guard section 7.
+
+### 10. Video
+
+`VideoObject` for pages whose main content is a video: see Google's video doc for required properties (2026-09-24 added `creator`/`author` and `interactionStatistic`).
 
 ## File Organization
 
@@ -263,3 +352,7 @@ components/
 - **Depends on**: pseo-data (structured fields feed schema generation)
 - **Works with**: pseo-templates (schema components are rendered inside page templates)
 - **Breadcrumb data from**: pseo-linking (breadcrumb trail structure)
+
+## Verify
+
+Build, start the app, and run seo-regression-guard against localhost (`npx -y tsx <seo-regression-guard-dir>/scripts/seo-check.ts --site http://localhost:3000`). Zero errors for the touched templates; also run the Rich Results Test on one URL per template.

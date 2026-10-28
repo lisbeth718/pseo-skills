@@ -2,8 +2,7 @@
 name: pseo-orchestrate
 description: Orchestrate the full programmatic SEO implementation by coordinating all pseo-* skills in the correct order. Use when implementing pSEO from scratch, running the full pSEO pipeline, or when the user asks to "set up programmatic SEO" or "build pSEO pages" without specifying a single skill.
 argument-hint: "[mode: full | discover-only | audit-only | implement | validate]"
-disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Bash, Edit, Write
+allowed-tools: Read, Glob, Grep, Bash, Edit, Write, WebSearch, WebFetch
 ---
 
 # pSEO Orchestrator
@@ -59,6 +58,8 @@ gsc (10)              ← post-launch monitoring (after pages are live)
 
 ## Execution Modes
 
+The `$ARGUMENTS` mode picks one of the modes below (default `full`).
+
 ### `full` (default)
 Run the complete pipeline: discover → audit → implement → validate. After deploy, hand off to gsc for post-launch monitoring (Phase 7).
 
@@ -72,7 +73,7 @@ Run pseo-audit and pseo-quality-guard. No code changes. Assumes discovery is don
 Skip discovery and audit, go straight to implementation (assumes both were already done).
 
 ### `validate`
-Run only pseo-quality-guard against the existing implementation.
+Run only pseo-quality-guard against the existing implementation, plus **seo-regression-guard** against a local build.
 
 ## Full Pipeline Procedure
 
@@ -101,7 +102,7 @@ Run only pseo-quality-guard against the existing implementation.
 ### Phase 3: Page Structure (parallel where possible)
 15. Run **pseo-templates** to create or refactor page templates and routing
 16. Run **pseo-linking** to build internal linking, breadcrumbs, and hub pages
-17. Verify all routes generate correctly and no 404s exist
+17. Verify all routes generate correctly: no sitemap URL returns 404; invalid slugs do return 404
 
 ### Phase 4: SEO Tags
 18. Run **pseo-metadata** to implement dynamic metadata on all templates
@@ -133,11 +134,11 @@ Run only pseo-quality-guard against the existing implementation.
 At each phase transition, check with the user:
 - Phase 0→1: "Here are the pSEO opportunities. Which page types should we build?"
 - Phase 1→1.5: "The audit found these issues. Scale target is N pages - do we need scale infrastructure?" (only if 10K+)
-- Phase 1.5→2: "Database and gating are set up. Proceed with data architecture?"
 - Phase 1→2: "The audit found these issues. Proceed with implementation?" (if < 10K, skip 1.5)
+- Phase 1.5→2: "Database and gating are set up. Proceed with data architecture?"
 - Phase 3→4: "Templates and linking are set up. Ready for metadata and schema?"
-- Phase 6→7: "Quality guard passed. Deploy, then start gsc monitoring on a schedule?"
 - Phase 5→6: "Performance and LLM visibility optimizations applied. Ready for final validation?"
+- Phase 6→7: "Quality guard passed. Deploy, then start gsc monitoring on a schedule?"
 
 ## Progress Tracking
 

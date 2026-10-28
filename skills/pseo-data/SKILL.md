@@ -1,7 +1,7 @@
 ---
 name: pseo-data
 description: Design and implement the structured data architecture that powers programmatic SEO pages, including content models, data sources, slug generation, and data-fetching layers. Use when setting up or refactoring the data foundation for pSEO, designing content models, or building the data pipeline that feeds page templates.
-argument-hint: "[source: cms | json | database | api | mdx]"
+argument-hint: "[source: cms | json | database | api | mdx] [scope: models | fetching | slugs | validation | nextjs | all]"
 allowed-tools: Read, Glob, Grep, Bash, Edit, Write
 ---
 
@@ -22,11 +22,15 @@ Design and implement the structured data layer that feeds all programmatic SEO p
 Decide which pages deserve to exist before designing anything else. Google's spam policies (scaled content abuse, doorway abuse) target many near-identical pages built mainly to rank. For every planned page type:
 
 - Define the minimum unique data fields a page needs to be useful on its own (real facts, numbers, attributes that differ per page, not just a swapped keyword).
-- Score each record against that minimum. Records below the threshold get no page: do not generate them, or return a real 404. Do not ship thin pages as `noindex` and plan to flip them later.
+- Score each record against that minimum. Records below the threshold get no page: do not generate them, or return a real 404. Do not ship thin pages as `noindex` and plan to flip them later (a noindexed thin page still costs crawl budget and is a maintenance trap).
 - Do not create a separate page for every query variation or "fan-out" query. One page per distinct entity or intent.
 - Keep a clear, browseable hierarchy (category > page) so pages are not just "closer to search results" than to a site structure.
 
 See **pseo-scale** for sufficiency scoring code.
+
+## Scope parameter
+
+`$ARGUMENTS` source picks section 5; the optional scope limits work: `models` = section 1, `fetching` = section 2, `slugs` = section 3, `validation` = section 4, `nextjs` = the Next.js 16.4 section, `all` (default) = everything.
 
 ## Implementation Steps
 
@@ -60,7 +64,14 @@ Extend `BaseSEOContent` for each page type with domain-specific fields. The inte
 
 ### 2. Build the Data-Fetching Layer
 
-Create a centralized data module (e.g., `lib/data.ts` or `src/data/index.ts`) that exports:
+Split the layer in two so scripts can use it without Next.js:
+
+- `lib/data/source.ts`: pure fetchers (read JSON/CMS/DB/API, paginate, validate). No `next/*` imports, no `server-only`, no `"use cache"`. Must run under plain `tsx`.
+- `lib/data/index.ts`: cached wrappers that call `source.ts` and add `"use cache"`, `cacheLife()` and `cacheTag()`. Pages and templates import only from here.
+
+Build and validation scripts (sitemap checks, `validate-data.ts`, sufficiency scoring) import `source.ts`, never `index.ts`, so they run outside the Next.js runtime.
+
+Both modules together export:
 
 - `getAllSlugs()` - Returns all valid slugs for static generation. Must handle pagination internally when the data source has 1000+ records (fetch in batches, return the complete list).
 - `getPageData(slug)` - Returns full content for a single page
@@ -83,6 +94,7 @@ Design a slug strategy that:
 - Is deterministic (same input always produces same slug)
 - Includes a collision detection mechanism
 - Follows a consistent URL hierarchy (e.g., `/category/page-slug`)
+- Uses hyphens, never underscores, as word separators (Google URL structure doc, 2026-10-23); strip or convert `_` in source values
 
 ### 4. Validate Data Integrity
 
@@ -109,21 +121,21 @@ Based on the data source (`$ARGUMENTS` or detected):
 
 ## Next.js 16.4 Data Fetching
 
-Applies when the project uses Next.js 16.x (current: 16.4.0, 2026-10-06). Cache Components is recommended for all apps in 16.4 and becomes the default in Next.js 17.
+Applies when the project uses Next.js 16.4.x (>= 16.4.1 for security fixes: two critical unauthenticated RCEs, in `use cache` with Cache Components and in image optimization with SVG, were fixed 2026-10-14). Cache Components is recommended for all apps in 16.4 and becomes the default in Next.js 17.
 
 - Enable with `cacheComponents: true`. Caching is opt-in: mark data functions with the `"use cache"` directive and set lifetime with `cacheLife()` / tag with `cacheTag()`. Dynamic is the default, so uncached reads in a page make it dynamic.
-- Put the data layer functions (`getPageData`, `getPagesByCategory`, ...) behind `"use cache"` so page templates stay prerenderable.
+- Put the data layer wrappers in `lib/data/index.ts` (`getPageData`, `getPagesByCategory`, ...) behind `"use cache"` so page templates stay prerenderable. The uncached fetchers live in `lib/data/source.ts` (section 2).
 - `params` and `searchParams` are async: `const { slug } = await params`.
 - `generateStaticParams` must return at least one param when Cache Components is on (an empty array is a build error). Return a small seed set (top pages by sufficiency score) and let the rest render on demand and cache; use `notFound()` for unknown slugs.
-- `export const ensureStatic = 'navigation' | 'prefetch' | 'shell'` fails the build if dynamic content leaks into a route. Use it on static pSEO templates.
+- `export const ensureStatic = 'navigation' | 'prefetch' | 'shell'` requires `cacheComponents`. Only `'navigation'` adds build validation (it fails the build on dynamic content) and it requires `generateStaticParams` to return every param. `'shell'` and `'prefetch'` add no build validation. With a seeded param set (rest on demand), do not rely on `ensureStatic` to validate anything.
 - Do not prerender the full set at build. On Vercel a build is capped at 45 minutes per deployment, so seed the top pages and use ISR/on-demand rendering for the long tail.
-- Check data existence **before** any Suspense boundary or `loading.tsx`. Once streaming starts the response is already `200`, so a later `notFound()` becomes a 200 page with `noindex` that Google may label a soft 404. For "no data for this combo" pages, resolve the lookup first (or return 404 in `proxy.ts`).
+- Check data existence **before** any Suspense boundary or `loading.tsx` (status codes: see pseo-templates section 6a).
 - Revalidation: `revalidateTag(tag, profile)` now requires a cache-life profile; use `updateTag()` in Server Actions for read-your-writes.
 - Without Cache Components, use `generateStaticParams` returning `[]` or `dynamic = 'force-static'` for runtime ISR, and `dynamicParams = false` to 404 unlisted params.
 
 ## HTML Size Budget
 
-Googlebot for Search fetches only the first **2MB** of uncompressed HTML per page (each CSS/JS resource is limited separately). Content, canonical and metadata past that point can be lost.
+Keep HTML well under the Googlebot 2MB limit (see pseo-templates section 6b). Data-side rules:
 
 - Never inline the whole dataset into the page as JSON (for example a full table of 5,000 rows in a `<script>` tag or serialized props). Pass only what the visible page needs.
 - Watch the RSC/`__next_f` payload and `__NEXT_DATA__` size: they count toward the 2MB. Keep per-page props to the fields rendered.
@@ -176,9 +188,9 @@ for (const slug of slugs) {
 ```
 lib/
   data/
-    index.ts          # public API (re-exports)
+    index.ts          # cached wrappers ("use cache", cacheLife, cacheTag); public API for pages
+    source.ts         # pure fetchers, no next/* or server-only; imported by scripts
     types.ts          # TypeScript interfaces
-    fetcher.ts        # data source integration
     slugs.ts          # slug generation and validation
     validation.ts     # data integrity checks
     cache.ts          # build-time caching utilities
@@ -198,6 +210,8 @@ Before considering this complete:
 - [ ] CMS/API fetching uses batched pagination internally
 - [ ] Data sufficiency threshold defined per page type; records below it produce no page
 - [ ] No dataset-sized inline JSON; sample page HTML stays well under 2MB uncompressed
+- [ ] `source.ts` has no `next/*` or `server-only` imports and runs under plain `tsx`; scripts import it, not `index.ts`
+- [ ] Slugs use hyphens, no underscores
 
 ## Relationship to Other Skills
 
@@ -208,3 +222,7 @@ This skill provides the data foundation for:
 - **gsc**: Post-launch monitoring; per-template indexing results feed back into sufficiency thresholds
 - **pseo-linking**: Uses `getRelatedPages()` and category data
 - **pseo-quality-guard**: Validates against the content models
+
+## Verify
+
+Run the validation script (via `source.ts`) with zero errors. Then build, start the app, and run seo-regression-guard against localhost (`npx -y tsx <seo-regression-guard-dir>/scripts/seo-check.ts --site http://localhost:3000`). Zero errors for the touched templates before calling this done.
